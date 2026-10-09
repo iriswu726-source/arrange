@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ARTALE 背包整理</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="brand">ARTALE <span>背包整理</span></h1>
+    <div class="global-search">
+      <input id="globalSearch" type="search" placeholder="搜尋所有角色的道具…（可用空白分隔多個關鍵字）" autocomplete="off">
+    </div>
+    <nav class="nav" id="nav">
+      <button data-view="bag" class="active">背包</button>
+      <button data-view="search">搜尋 / 總覽</button>
+      <button data-view="scan">掃圖</button>
+      <button data-view="icons">圖示庫</button>
+      <span class="nav-sep"></span>
+      <button data-action="export" title="下載備份 JSON">匯出</button>
+      <button data-action="import" title="從備份 JSON 還原">匯入</button>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h2>角色</h2>
+        <button id="addCharBtn" class="btn small primary">＋ 新增</button>
+      </div>
+      <ul id="charList" class="char-list"></ul>
+      <div id="sidebarStats" class="sidebar-stats"></div>
+    </aside>
+
+    <main id="main" class="main"></main>
+  </div>
+
+  <dialog id="moveDialog" class="dialog">
+    <form method="dialog">
+      <h3>移動道具</h3>
+      <p id="moveInfo"></p>
+      <label>移到角色 <select id="moveTarget"></select></label>
+      <label>數量 <input id="moveQty" type="number" min="1" value="1"></label>
+      <menu>
+        <button value="cancel" class="btn">取消</button>
+        <button value="ok" class="btn primary">移動</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <datalist id="nameList"></datalist>
+
+  <script src="js/store.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/scanner.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
