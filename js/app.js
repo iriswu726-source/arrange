@@ -165,9 +165,11 @@
     for (const b of document.querySelectorAll('#nav button[data-view]')) b.classList.toggle('active', b.dataset.view === ui.view);
   }
 
+  /* 名稱建議清單：只列目前分頁的道具（背包看所在分頁、掃圖看選的分頁） */
   function renderNames() {
-    const names = new Set(S.knownNames(state));
-    for (const it of catalog) names.add(it.name);
+    const tab = ui.view === 'scan' ? scan.tab || ui.tab : ui.view === 'bag' ? ui.tab : '';
+    const names = new Set(S.knownNames(state, tab));
+    for (const it of catalog) if (!tab || !it.tab || it.tab === tab) names.add(it.name);
     $('#nameList').innerHTML = Array.from(names).map((n) => `<option value="${esc(n)}">`).join('');
   }
 
@@ -1349,7 +1351,7 @@
     const ch = currentChar();
     const tr = b.closest('tr');
     if (act === 'add-char') addCharacterFlow();
-    else if (act === 'tab') { ui.tab = b.dataset.tab; ui.filter = ''; renderBag(); }
+    else if (act === 'tab') { ui.tab = b.dataset.tab; ui.filter = ''; renderBag(); renderNames(); }
     else if (act === 'sort') { S.sortTab(state, ch.id, ui.tab, b.dataset.by); save(); renderItems(); }
     else if (act === 'clear-tab') {
       if (ch.inventory[ui.tab].length && confirm(`清空「${ch.name}」的${S.tabName(ui.tab)}分頁？`)) {
@@ -1511,7 +1513,7 @@
       return;
     }
     if (t.id === 'scanChar') { scan.charId = t.value; renderScanResults(); }
-    else if (t.id === 'scanTab') { scan.tab = t.value; scan.rows_ = []; renderScanResults(); drawCanvas(); }
+    else if (t.id === 'scanTab') { scan.tab = t.value; scan.rows_ = []; renderScanResults(); drawCanvas(); renderNames(); }
     else if (t.id === 'scanOcr') scan.ocr = t.checked;
     else if (t.id === 'scanDigit') scan.digitThreshold = Number(t.value) || 175;
     else if (t.id === 'scanZoom') { scan.zoom = t.value; drawCanvas(); }
