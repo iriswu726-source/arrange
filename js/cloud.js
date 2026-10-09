@@ -126,9 +126,26 @@
   /* 給 ArrSync 用的 backend。 */
   function backend(teamId) {
     const base = 'teams/' + teamId + '/';
+    // 刪除集中成批次（每批最多 400 筆）一次送出：舊版圖示搬家時可能要刪幾百份文件
+    let queue = null;
     return {
       set: (path, data) => fb.db.doc(base + path).set(data),
-      remove: (path) => fb.db.doc(base + path).delete(),
+      remove: (path) => {
+        if (!queue) {
+          const q = { paths: [] };
+          q.done = Promise.resolve().then(async () => {
+            queue = null;
+            for (let i = 0; i < q.paths.length; i += 400) {
+              const batch = fb.db.batch();
+              for (const p of q.paths.slice(i, i + 400)) batch.delete(fb.db.doc(base + p));
+              await batch.commit();
+            }
+          });
+          queue = q;
+        }
+        queue.paths.push(path);
+        return queue.done;
+      },
     };
   }
 

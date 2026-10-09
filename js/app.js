@@ -1126,6 +1126,8 @@
         if (cloud.uploadLocal) {
           cloud.uploadLocal = false;
           copyLocalIntoTeam();
+        } else if (cloud.sync.hasLegacyIcons()) {
+          save(); // 舊版的圖示（一個一份文件）搬進打包格式，之後打開讀取次數大幅減少
         }
         ui.charId = state.characters[0] ? state.characters[0].id : null;
         render();
