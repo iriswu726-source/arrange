@@ -22,6 +22,12 @@
     return out;
   }
 
+  // 素質也能搜尋（例如「攻擊」「STR」）
+  const Store = typeof module !== 'undefined' && module.exports ? require('./store.js') : root.ArrStore;
+  function statsText(stats) {
+    return Store && Store.statsSummary ? Store.statsSummary(stats) : '';
+  }
+
   function tokens(query) {
     return String(query == null ? '' : query)
       .split(/[\s,，、]+/)
@@ -41,7 +47,7 @@
       if (charIds && !charIds.has(ch.id)) continue;
       for (const tab of tabs) {
         for (const it of ch.inventory[tab] || []) {
-          const hay = normalize(it.name + ' ' + it.note);
+          const hay = normalize(it.name + ' ' + it.note + ' ' + statsText(it.stats));
           if (!toks.every((t) => hay.includes(t))) continue;
           const key = tab + '\u0000' + it.name;
           let g = groups.get(key);
@@ -50,7 +56,7 @@
             groups.set(key, g);
           }
           g.total += it.qty;
-          g.entries.push({ charId: ch.id, charName: ch.name, tab, itemId: it.id, qty: it.qty, note: it.note });
+          g.entries.push({ charId: ch.id, charName: ch.name, tab, itemId: it.id, qty: it.qty, note: it.note, stats: it.stats || {} });
         }
       }
     }

@@ -51,3 +51,11 @@ test('統計與分散道具', () => {
   assert.equal(s[1].items, 3);
   assert.deepEqual(Q.duplicates(st).map((g) => g.name), ['紅色藥水']);
 });
+
+test('可以用素質搜尋裝備', () => {
+  const { st, a } = world();
+  S.updateItem(st, a.id, 'equip', a.inventory.equip[0].id, { stats: { watk: 5, str: 2 } });
+  assert.deepEqual(Q.search(st, 'STR').map((g) => g.name), ['褐色工地手套']);
+  assert.deepEqual(Q.search(st, '手套 攻擊+5').map((g) => g.name), ['褐色工地手套']);
+  assert.deepEqual(Q.search(st, '手套')[0].entries[0].stats, { watk: 5, str: 2 });
+});

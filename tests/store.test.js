@@ -95,3 +95,35 @@ test('角色排序與刪除', () => {
   assert.ok(S.removeCharacter(st, a.id));
   assert.equal(st.characters.length, 1);
 });
+
+test('裝備素質：整理、摘要、不合併', () => {
+  const { st, a } = setup();
+  assert.deepEqual(S.cleanStats({ str: '3', watk: 5.7, dex: 0, bogus: 9, slots: '7' }), { str: 3, watk: 5, slots: 7 });
+  assert.equal(S.statsSummary({ str: 3, watk: 5, speed: -2, slots: 7 }), 'STR+3 攻擊+5 移速-2 可升級7');
+  assert.equal(S.statsSummary({}), '');
+  S.addItem(st, a.id, 'equip', { name: '褐色工地手套', stats: { watk: 2 } });
+  S.addItem(st, a.id, 'equip', { name: '褐色工地手套' });
+  assert.equal(a.inventory.equip.length, 2, '裝備每件分開');
+  const it = S.updateItem(st, a.id, 'equip', a.inventory.equip[1].id, { stats: { dex: 4, slots: 5 } });
+  assert.deepEqual(it.stats, { dex: 4, slots: 5 });
+  // 消耗類照舊合併
+  S.addItem(st, a.id, 'use', { name: '紅色藥水', qty: 1 });
+  S.addItem(st, a.id, 'use', { name: '紅色藥水', qty: 2 });
+  assert.equal(a.inventory.use.length, 1);
+});
+
+test('重新掃描（取代）裝備欄時保留素質與備註', () => {
+  const { st, a, b } = setup();
+  const g1 = S.addItem(st, a.id, 'equip', { name: '手套', stats: { watk: 3 }, note: '+3' });
+  S.addItem(st, a.id, 'equip', { name: '手套', stats: { watk: 1 } });
+  S.addItem(st, a.id, 'equip', { name: '帽子', stats: { wdef: 10 } });
+  S.applyItems(st, a.id, 'equip', [{ name: '手套' }, { name: '手套' }, { name: '新鞋子' }], 'replace');
+  assert.deepEqual(a.inventory.equip.map((x) => [x.name, x.stats.watk || x.stats.wdef || 0, x.note]), [['手套', 3, '+3'], ['手套', 1, ''], ['新鞋子', 0, '']]);
+  assert.equal(a.inventory.equip[0].id, g1.id, '沿用原本 id');
+  // 移動到別的角色時素質跟著走
+  assert.ok(S.moveItem(st, a.id, 'equip', g1.id, b.id, 1));
+  assert.deepEqual(b.inventory.equip[0].stats, { watk: 3 });
+  // 舊資料沒有 stats 也能讀
+  const back = S.normalizeState(JSON.parse(JSON.stringify({ characters: [{ name: 'x', inventory: { equip: [{ name: '舊裝備' }] } }] })));
+  assert.deepEqual(back.characters[0].inventory.equip[0].stats, {});
+});

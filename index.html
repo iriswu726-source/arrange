@@ -52,6 +52,19 @@
     </form>
   </dialog>
 
+  <dialog id="statsDialog" class="dialog">
+    <form method="dialog">
+      <h3 id="statsTitle">素質</h3>
+      <p class="muted small" style="margin:6px 0 0">只填有的素質，空白代表 0。</p>
+      <div id="statsGrid" class="stats-grid"></div>
+      <menu class="menu-rev">
+        <button value="ok" class="btn primary">儲存</button>
+        <button value="cancel" class="btn">取消</button>
+        <button value="clear" class="btn danger" formnovalidate>清除素質</button>
+      </menu>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" hidden></div>
 
   <datalist id="nameList"></datalist>

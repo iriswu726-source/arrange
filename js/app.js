@@ -219,7 +219,7 @@
       </div>
       <form class="panel add-form row" id="addForm" autocomplete="off">
         <input name="name" class="name" list="nameList" placeholder="道具名稱" required>
-        <input name="qty" type="number" min="1" value="1" title="數量">
+        <input name="qty" type="number" min="1" value="1" title="數量" ${ui.tab === 'equip' ? 'hidden' : ''}>
         <input name="note" class="note" placeholder="備註（選填，如：+7、10% 卷）">
         <button class="btn primary">加入${esc(S.tabName(ui.tab))}</button>
       </form>
@@ -241,7 +241,8 @@
     if (!box || !ch) return;
     const list = ch.inventory[ui.tab];
     const toks = Q.tokens(ui.filter);
-    const shown = list.filter((it) => toks.every((t) => Q.normalize(it.name + ' ' + it.note).includes(t)));
+    const shown = list.filter((it) => toks.every((t) => Q.normalize(it.name + ' ' + it.note + ' ' + S.statsSummary(it.stats)).includes(t)));
+    const isEquip = ui.tab === 'equip';
     if (!list.length) {
       box.innerHTML = `<div class="empty">${esc(S.tabName(ui.tab))}分頁是空的。<br>用上方表單加入，或按「📷 掃描此分頁」。</div>`;
       return;
@@ -252,12 +253,14 @@
     }
     const others = state.characters.length > 1;
     box.innerHTML = `<table class="items">
-      <thead><tr><th></th><th>名稱</th><th>數量</th><th>備註</th><th></th></tr></thead>
+      <thead><tr><th></th><th>名稱</th>${isEquip ? '<th>素質</th>' : '<th>數量</th>'}<th>備註</th><th></th></tr></thead>
       <tbody>${shown.map((it) => `
         <tr data-item="${esc(it.id)}" ${ui.flashItem === it.id ? 'style="outline:2px solid var(--accent)"' : ''}>
           <td class="thumb">${thumbHtml(it.name, ui.tab, it.iconId)}</td>
           <td><input class="inline" data-ifield="name" value="${esc(it.name)}" list="nameList"></td>
-          <td><input class="inline qty" data-ifield="qty" type="number" min="1" value="${it.qty}"></td>
+          ${isEquip
+            ? `<td><button class="stats-btn ${S.hasStats(it.stats) ? '' : 'empty'}" data-act="edit-stats" title="編輯素質">${esc(S.statsSummary(it.stats)) || '＋ 輸入素質'}</button>${it.qty > 1 ? ` <span class="badge" title="舊資料合併了 ${it.qty} 件">×${it.qty}</span>` : ''}</td>`
+            : `<td><input class="inline qty" data-ifield="qty" type="number" min="1" value="${it.qty}"></td>`}
           <td><input class="inline" data-ifield="note" value="${esc(it.note)}" placeholder="—"></td>
           <td class="actions">
             ${others ? '<button class="icon-btn" data-act="move-item" title="移到其他角色">⇄ 移動</button>' : ''}
@@ -293,6 +296,29 @@
     };
     dlg.returnValue = '';
     dlg.showModal();
+  }
+
+  /* 裝備素質編輯視窗 */
+  function openStatsDialog(itemId) {
+    const ch = currentChar();
+    const it = S.findItem(state, ch.id, ui.tab, itemId);
+    if (!it) return;
+    const dlg = $('#statsDialog');
+    $('#statsTitle').textContent = `${it.name} 的素質`;
+    $('#statsGrid').innerHTML = S.STAT_FIELDS.map((f) => `
+      <label>${esc(f.label)}<input type="number" name="${f.key}" value="${it.stats && it.stats[f.key] ? it.stats[f.key] : ''}" placeholder="0"></label>`).join('');
+    dlg.onclose = () => {
+      if (dlg.returnValue !== 'ok' && dlg.returnValue !== 'clear') return;
+      const stats = {};
+      if (dlg.returnValue === 'ok') for (const inp of dlg.querySelectorAll('#statsGrid input')) stats[inp.name] = inp.value;
+      S.updateItem(state, ch.id, ui.tab, itemId, { stats });
+      save();
+      renderItems();
+    };
+    dlg.returnValue = '';
+    dlg.showModal();
+    const first = dlg.querySelector('#statsGrid input');
+    if (first) first.focus();
   }
 
   /* ================= 搜尋 / 總覽 ================= */
@@ -336,7 +362,7 @@
               ${new Set(g.entries.map((e) => e.charId)).size > 1 ? `<span class="badge">分散 ${new Set(g.entries.map((e) => e.charId)).size} 個角色</span>` : ''}</div>
             <div class="entries">${g.entries.map((e) => `
               <span class="chip" data-jump="${esc(e.charId)}" data-tab="${e.tab}" data-item="${esc(e.itemId)}" title="跳到該角色背包">
-                ${esc(e.charName)} <b>×${e.qty}</b>${e.note ? ` <span class="muted">(${highlight(e.note, q)})</span>` : ''}
+                ${esc(e.charName)} <b>×${e.qty}</b>${e.note ? ` <span class="muted">(${highlight(e.note, q)})</span>` : ''}${S.hasStats(e.stats) ? ` <span class="muted small">${highlight(S.statsSummary(e.stats), q)}</span>` : ''}
               </span>`).join('')}
             </div>
           </div>
@@ -1304,6 +1330,7 @@
     } else if (act === 'scan-here') { scan.charId = ch.id; scan.tab = ui.tab; scan.rows_ = []; setView('scan'); }
     else if (act === 'del-item') { S.removeItem(state, ch.id, ui.tab, tr.dataset.item); save(); render(); }
     else if (act === 'move-item') openMoveDialog(tr.dataset.item);
+    else if (act === 'edit-stats') openStatsDialog(tr.dataset.item);
     else if (act === 'scan-pick') $('#scanFile').click();
     else if (act === 'scan-demo') { const cv = demoImage(); setScanImage(cv); renderScan(); }
     else if (act === 'scan-run') runScan();

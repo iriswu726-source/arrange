@@ -7,6 +7,12 @@
   const TAB_IDS = ['equip', 'use', 'setup', 'etc', 'special'];
   const DIGITS_PATH = 'meta/digits';
 
+  function cleanStats(raw) {
+    const out = {};
+    if (raw && typeof raw === 'object') for (const [k, v] of Object.entries(raw)) if (Number.isFinite(Number(v)) && Number(v) !== 0) out[k] = Math.trunc(Number(v));
+    return out;
+  }
+
   /* state → { path: data } */
   function docsFromState(state) {
     const docs = {};
@@ -14,7 +20,7 @@
       const inventory = {};
       for (const t of TAB_IDS) {
         inventory[t] = (c.inventory[t] || []).map((it) => ({
-          id: it.id, name: it.name, qty: it.qty, note: it.note || '', iconId: it.iconId || '',
+          id: it.id, name: it.name, qty: it.qty, note: it.note || '', iconId: it.iconId || '', stats: it.stats || {},
         }));
       }
       docs['characters/' + c.id] = { name: c.name, job: c.job || '', level: c.level || '', order: i, inventory };
@@ -32,7 +38,7 @@
     for (const t of TAB_IDS) {
       inventory[t] = (Array.isArray(inv[t]) ? inv[t] : []).map((it) => ({
         id: String(it.id || ''), name: String(it.name || ''), qty: Number(it.qty) || 1,
-        note: String(it.note || ''), iconId: String(it.iconId || ''),
+        note: String(it.note || ''), iconId: String(it.iconId || ''), stats: cleanStats(it.stats),
       })).filter((it) => it.id && it.name);
     }
     return { id, name: String(data.name || '未命名角色'), job: String(data.job || ''), level: data.level || '', inventory, order: Number(data.order) || 0 };

@@ -104,3 +104,16 @@ test('文件內容可以存進 Firestore（沒有巢狀陣列、沒有 undefined
   };
   for (const d of Object.values(Y.docsFromState(st))) check(d, false);
 });
+
+test('裝備素質會同步', () => {
+  const cloud = fakeCloud();
+  const a = cloud.device();
+  const b = cloud.device();
+  const c = S.addCharacter(a.state, '劍士');
+  const it = S.addItem(a.state, c.id, 'equip', { name: '手套', stats: { watk: 3 } });
+  a.sync.push(a.state);
+  assert.deepEqual(b.state.characters[0].inventory.equip[0].stats, { watk: 3 });
+  S.updateItem(b.state, c.id, 'equip', it.id, { stats: { watk: 4, slots: 2 } });
+  b.sync.push(b.state);
+  assert.deepEqual(a.state.characters[0].inventory.equip[0].stats, { watk: 4, slots: 2 });
+});

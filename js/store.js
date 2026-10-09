@@ -12,6 +12,49 @@
   ];
   const TAB_IDS = TABS.map((t) => t.id);
   const STORAGE_KEY = 'artale-arrange-v1';
+
+  // 裝備素質欄位
+  const STAT_FIELDS = [
+    { key: 'str', label: '力量', short: 'STR' },
+    { key: 'dex', label: '敏捷', short: 'DEX' },
+    { key: 'int', label: '智力', short: 'INT' },
+    { key: 'luk', label: '幸運', short: 'LUK' },
+    { key: 'hp', label: 'MaxHP', short: 'HP' },
+    { key: 'mp', label: 'MaxMP', short: 'MP' },
+    { key: 'watk', label: '攻擊力', short: '攻擊' },
+    { key: 'matk', label: '魔法攻擊力', short: '魔攻' },
+    { key: 'wdef', label: '物理防禦力', short: '物防' },
+    { key: 'mdef', label: '魔法防禦力', short: '魔防' },
+    { key: 'acc', label: '命中率', short: '命中' },
+    { key: 'avoid', label: '迴避率', short: '迴避' },
+    { key: 'speed', label: '移動速度', short: '移速' },
+    { key: 'jump', label: '跳躍力', short: '跳躍' },
+    { key: 'slots', label: '可升級次數', short: '可升級' },
+  ];
+
+  /* 只保留有效、非 0 的整數素質。 */
+  function cleanStats(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    for (const f of STAT_FIELDS) {
+      const n = Math.trunc(Number(raw[f.key]));
+      if (Number.isFinite(n) && n !== 0 && Math.abs(n) < 100000) out[f.key] = n;
+    }
+    return out;
+  }
+
+  function hasStats(stats) {
+    return !!stats && Object.keys(stats).length > 0;
+  }
+
+  /* 素質摘要，例如「STR+3 攻擊+5 可升級7」。 */
+  function statsSummary(stats) {
+    if (!hasStats(stats)) return '';
+    return STAT_FIELDS.filter((f) => stats[f.key]).map((f) => {
+      const v = stats[f.key];
+      return f.key === 'slots' ? f.short + v : f.short + (v > 0 ? '+' : '') + v;
+    }).join(' ');
+  }
   const VERSION = 1;
 
   let seq = 0;
@@ -71,6 +114,7 @@
             qty: toQty(it.qty, 1),
             note: cleanName(it.note),
             iconId: typeof it.iconId === 'string' ? it.iconId : '',
+            stats: cleanStats(it.stats),
           });
         }
       }
@@ -157,7 +201,7 @@
     return ch.inventory[tab];
   }
 
-  /* 新增道具；同名同備註預設合併數量。回傳該筆道具。 */
+  /* 新增道具；同名同備註預設合併數量。裝備每件素質可能不同，所以不合併。回傳該筆道具。 */
   function addItem(state, charId, tab, item, opts) {
     const list = getTab(state, charId, tab);
     if (!list) return null;
@@ -165,16 +209,17 @@
     if (!name) return null;
     const qty = toQty(item.qty, 1);
     const note = cleanName(item.note);
-    const merge = !opts || opts.merge !== false;
+    const stats = cleanStats(item.stats);
+    const merge = (!opts || opts.merge !== false) && tab !== 'equip' && !hasStats(stats);
     if (merge) {
-      const same = list.find((x) => x.name === name && x.note === note);
+      const same = list.find((x) => x.name === name && x.note === note && !hasStats(x.stats));
       if (same) {
         same.qty += qty;
         if (item.iconId && !same.iconId) same.iconId = item.iconId;
         return same;
       }
     }
-    const it = { id: uid('i'), name, qty, note, iconId: item.iconId || '' };
+    const it = { id: uid('i'), name, qty, note, iconId: item.iconId || '', stats };
     list.push(it);
     return it;
   }
@@ -191,6 +236,7 @@
     if (patch.qty !== undefined) it.qty = toQty(patch.qty, it.qty);
     if (patch.note !== undefined) it.note = cleanName(patch.note);
     if (patch.iconId !== undefined) it.iconId = patch.iconId;
+    if (patch.stats !== undefined) it.stats = cleanStats(patch.stats);
     return it;
   }
 
@@ -209,19 +255,27 @@
     const it = findItem(state, fromCharId, tab, itemId);
     if (!it || !getCharacter(state, toCharId)) return false;
     const n = Math.min(toQty(qty, it.qty), it.qty);
-    addItem(state, toCharId, tab, { name: it.name, qty: n, note: it.note, iconId: it.iconId });
+    addItem(state, toCharId, tab, { name: it.name, qty: n, note: it.note, iconId: it.iconId, stats: it.stats });
     if (n >= it.qty) removeItem(state, fromCharId, tab, itemId);
     else it.qty -= n;
     return true;
   }
 
-  /* 掃圖結果寫入：mode = 'replace'（整個分頁換掉）或 'merge'（加總）。 */
+  /* 掃圖結果寫入：mode = 'replace'（整個分頁換掉）或 'merge'（加總）。
+   * 取代時，同名道具沿用原本輸入的素質與備註（重新掃描裝備欄不會弄丟素質）。 */
   function applyItems(state, charId, tab, items, mode) {
     const list = getTab(state, charId, tab);
     if (!list) return 0;
-    if (mode === 'replace') list.length = 0;
+    const old = mode === 'replace' ? list.splice(0) : [];
     let n = 0;
-    for (const item of items) if (addItem(state, charId, tab, item)) n++;
+    for (const item of items) {
+      const i = old.findIndex((o) => o.name === cleanName(item.name));
+      const prev = i >= 0 ? old.splice(i, 1)[0] : null;
+      const merged = prev && !hasStats(item.stats) && !item.note ? Object.assign({}, item, { stats: prev.stats, note: prev.note }) : item;
+      const it = addItem(state, charId, tab, merged);
+      if (it && prev && tab === 'equip') it.id = prev.id; // 裝備沿用原本的 id
+      if (it) n++;
+    }
     return n;
   }
 
@@ -282,6 +336,7 @@
 
   const api = {
     TABS, TAB_IDS, STORAGE_KEY, VERSION,
+    STAT_FIELDS, cleanStats, hasStats, statsSummary,
     uid, tabName, createState, normalizeState, loadState, saveState,
     getCharacter, addCharacter, updateCharacter, removeCharacter, moveCharacter,
     getTab, addItem, findItem, updateItem, removeItem, moveItem, applyItems, sortTab,
