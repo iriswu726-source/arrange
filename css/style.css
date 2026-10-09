@@ -167,7 +167,7 @@ table.items input.inline { background: transparent; border-color: transparent; w
 table.items input.inline:hover { border-color: var(--line); }
 table.items input.inline.qty { width: 90px; }
 .thumb-img, .thumb-ph {
-  width: 32px; height: 32px; border-radius: 4px; image-rendering: pixelated;
+  width: 32px; height: 32px; border-radius: 4px; image-rendering: pixelated; object-fit: contain;
   background: var(--panel-2); display: inline-block; vertical-align: middle;
 }
 .thumb-ph { border: 1px dashed var(--line); }

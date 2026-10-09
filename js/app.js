@@ -96,11 +96,30 @@
     return S.getCharacter(state, ui.charId) || state.characters[0] || null;
   }
 
+  /* 道具縮圖：圖鑑裡有就用網站原圖，否則用圖示庫的圖。 */
   function thumbHtml(name, tab, iconId) {
     const ic = S.iconById(state, iconId) || S.iconForName(state, name, tab);
-    return ic && ic.thumb
-      ? `<img class="thumb-img" src="${esc(ic.thumb)}" alt="">`
+    const src = catalogImg(name, tab) || (ic && ic.thumb);
+    return src
+      ? `<img class="thumb-img" src="${esc(src)}" alt="">`
       : '<span class="thumb-ph"></span>';
+  }
+
+  /* 圖鑑中同名道具的原始圖片（優先同分頁）。 */
+  let catalogByName = new Map();
+  function indexCatalog() {
+    catalogByName = new Map();
+    for (const it of catalog) {
+      const list = catalogByName.get(it.name) || [];
+      list.push(it);
+      catalogByName.set(it.name, list);
+    }
+  }
+  function catalogImg(name, tab) {
+    const list = catalogByName.get(name);
+    if (!list) return '';
+    const it = list.find((x) => !tab || !x.tab || x.tab === tab) || list[0];
+    return it.img;
   }
 
   function tabBadge(tab) {
@@ -744,13 +763,17 @@
       const name = r.name.trim();
       let iconId = '';
       const matched = S.iconById(state, r.iconId);
-      if (matched && matched.name === name) iconId = matched.id;
+      const official = catalogImg(name, scan.tab); // 網站原圖，當作圖示庫縮圖
+      if (matched && matched.name === name) {
+        iconId = matched.id;
+        if (official && matched.thumb !== official) matched.thumb = official;
+      }
       else if (r.remember) {
         // 同一次掃描中重複的新圖示只學一次
         const m = SC.matchIcon(r.feat, state.icons.filter((x) => x.name === name), scan.tab, scan.maxDist);
         if (m.icon) iconId = m.icon.id;
         else {
-          iconId = S.learnIcon(state, { name, tab: scan.tab, feat: r.feat, thumb: r.thumb }).id;
+          iconId = S.learnIcon(state, { name, tab: scan.tab, feat: r.feat, thumb: official || r.thumb }).id;
           learned++;
         }
       }
@@ -774,6 +797,7 @@
     if (!CAT) return;
     CAT.load().then((items) => {
       catalog = items;
+      indexCatalog();
       renderNames();
       if (ui.view === 'icons') renderIcons();
     }).catch(() => { /* 不支援 IndexedDB 就不用圖鑑 */ });
@@ -789,6 +813,7 @@
       if (bar) bar.hidden = false;
       const res = await CAT.importData(json, (f) => { if (bar) bar.firstElementChild.style.width = Math.round(f * 100) + '%'; });
       catalog = await CAT.load();
+      indexCatalog();
       renderNames();
       renderIcons();
       toast(`圖鑑匯入完成：${res.added} 個道具` + (res.skipped ? `（略過 ${res.skipped} 個）` : ''));
@@ -842,7 +867,7 @@
       ${digitInfoHtml()}
       <div class="icon-grid">${sorted.map((ic) => `
         <div class="icon-card" data-icon="${esc(ic.id)}" data-search="${esc(Q.normalize(ic.name))}">
-          ${ic.thumb ? `<img class="thumb-img" src="${esc(ic.thumb)}" alt="">` : '<span class="thumb-ph"></span>'}
+          ${thumbHtml(ic.name, ic.tab, ic.id)}
           <div class="fields">
             <input data-icfield="name" value="${esc(ic.name)}">
             <select data-icfield="tab"><option value="">（任何分頁）</option>${S.TABS.map((t) => `<option value="${t.id}" ${ic.tab === t.id ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
@@ -1296,7 +1321,7 @@
       catch (e) { prompt('複製下面這段程式：', window.ArrExportScript); }
     } else if (act === 'import-catalog') $('#catalogFile').click();
     else if (act === 'clear-catalog') {
-      if (confirm(`清除道具圖鑑（${catalog.length} 個）？之後可以再匯入。`)) { await CAT.clear(); catalog = []; renderNames(); renderIcons(); }
+      if (confirm(`清除道具圖鑑（${catalog.length} 個）？之後可以再匯入。`)) { await CAT.clear(); catalog = []; indexCatalog(); renderNames(); renderIcons(); }
     } else if (act === 'use-guess') {
       const row = scan.rows_[Number(tr.dataset.row)];
       row.name = row.guess;
