@@ -9,8 +9,8 @@
   const C = window.ArrCloud;
   const CLOUD_KEY = 'artale-arrange-cloud';
   const CAT = window.ArrCatalog;
-  const CAT_AUTO = 0.1; // 圖鑑比對：距離低於此值、且明顯勝過第二名就自動填名稱
-  const CAT_MARGIN = 0.05;
+  const CAT_AUTO = 0.2; // 圖鑑比對：距離低於此值、且明顯勝過第二名就自動填名稱（以 1733 個真實圖示測試調整）
+  const CAT_MARGIN = 0.025;
   let catalog = []; // 道具圖鑑（存在本機 IndexedDB）
   const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 

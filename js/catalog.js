@@ -5,6 +5,8 @@
   const DB_NAME = 'artale-arrange';
   const STORE = 'catalog';
   // 網站分類 → 背包分頁；沒對到的不限分頁
+  // 網站歸在裝備、但遊戲裡放在消耗欄的分類
+  const CATEGORY_TAB = { arrow: 'use', arrows: 'use', 'throwing-star': 'use', 'throwing-stars': 'use', bullet: 'use', bullets: 'use' };
   const SECTION_TAB = { equipment: 'equip', consumables: 'use', consumable: 'use', use: 'use', potions: 'use', scrolls: 'use', setup: 'setup', 'set-up': 'setup', chairs: 'setup', etc: 'etc', materials: 'etc', cash: 'special' };
 
   function openDb() {
@@ -65,7 +67,7 @@
         rows.push({
           id: String(it.id), name: String(it.name).trim(), nameEn: String(it.nameEn || ''),
           section: String(it.section || ''), category: String(it.category || ''),
-          tab: SECTION_TAB[it.section] || '', img: it.img, shape,
+          tab: CATEGORY_TAB[it.category] || SECTION_TAB[it.section] || '', img: it.img, shape,
         });
       } catch (e) {
         skipped++;
@@ -84,5 +86,5 @@
     db.close();
   }
 
-  root.ArrCatalog = { load, importData, clear, SECTION_TAB };
+  root.ArrCatalog = { load, importData, clear, SECTION_TAB, CATEGORY_TAB };
 })(typeof self !== 'undefined' ? self : this);
