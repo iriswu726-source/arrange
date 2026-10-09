@@ -35,15 +35,72 @@
 - 查看所有學過的圖示，可改名、指定分頁或刪除（認錯時刪掉重新學）。
 - 顯示已學會的數字模板，可重設。
 
+### 和朋友共用（雲端隊伍）
+- 用 Google 帳號登入後建立「隊伍」，把**邀請連結**傳給朋友，朋友登入後就能加入。
+- 隊伍裡的角色、道具、圖示庫、數字模板全部共用，任何人修改，其他人畫面**即時更新**。
+- 建立隊伍時可以把自己本機的資料一起上傳；本機資料不會被刪，隨時可以「切回本機模式」。
+- 隊長可以移出成員；成員可以自己退出。拿到邀請連結的人都能加入，請只傳給信任的人。
+- 需要先完成下面的「雲端共用設定」（一次就好，約 15 分鐘）。
+
 ### 備份
 - 「匯出」下載 JSON 備份（含角色、道具、圖示庫、數字模板）；「匯入」還原。換電腦或換瀏覽器時用這個搬資料。
+
+## 雲端共用設定（Firebase + GitHub Pages）
+
+只要隊長做一次，朋友什麼都不用設定，打開網址登入就好。全部使用免費方案。
+
+### 1. 建立 Firebase 專案
+1. 到 <https://console.firebase.google.com/> 用 Google 帳號登入，按「新增專案」，取個名字（Google Analytics 可以關掉）。
+2. 左側「建構 → **Authentication**」→「開始使用」→「登入方式」→ 選 **Google** → 啟用 → 選一個支援電子郵件 → 儲存。
+3. 左側「建構 → **Firestore Database**」→「建立資料庫」→ 位置選 `asia-east1`（台灣）→ 選「以正式版模式啟動」→ 建立。
+4. Firestore 的「**規則**」分頁：把本專案 [`firestore.rules`](firestore.rules) 的內容整個貼上，取代原本的內容 → 「發布」。
+5. 左上齒輪「專案設定」→「一般」→ 下方「你的應用程式」按 **`</>`（網頁）** → 取個暱稱 → 註冊（不用勾 Hosting）。
+6. 畫面會出現一段 `const firebaseConfig = { ... }`，把大括號內容貼到 [`js/firebase-config.js`](js/firebase-config.js)：
+
+   ```js
+   window.ARR_FIREBASE_CONFIG = {
+     apiKey: '...',
+     authDomain: '你的專案.firebaseapp.com',
+     projectId: '你的專案',
+     storageBucket: '...',
+     messagingSenderId: '...',
+     appId: '...',
+   };
+   ```
+
+   這些值不是密碼，放在公開網站上沒關係；資料由第 4 步的規則保護（只有隊伍成員能讀寫）。
+
+### 2. 用 GitHub Pages 放上網路
+Google 登入不能在「直接開啟檔案」時使用，所以網頁要放到網路上：
+
+1. 把修改好的 `js/firebase-config.js` 提交到 GitHub 的 `main` 分支。
+2. GitHub 專案頁 →「Settings → Pages」→ Source 選「Deploy from a branch」→ Branch 選 `main`、資料夾 `/ (root)` → Save。
+3. 等一兩分鐘，網址會是 `https://<你的帳號>.github.io/<專案名稱>/`（例如 `https://iriswu726-source.github.io/arrange/`）。
+4. 回到 Firebase：「Authentication → 設定 → 授權網域」→「新增網域」→ 填 `<你的帳號>.github.io`。
+
+### 3. 開始使用
+1. 打開 GitHub Pages 網址 → 上方「共用」→ 用 Google 登入。
+2. 「建立新隊伍」（可勾選把本機資料一起上傳）。
+3. 按「複製連結」，把邀請連結傳給朋友；朋友打開連結、登入、按確定就加入了。
+
+### 免費額度
+Firebase 免費方案每天 5 萬次讀取、2 萬次寫入、1 GB 儲存空間。本工具每次修改只寫入有變動的那個角色（或圖示），
+每個人每次開啟網頁會讀取一次全部角色與圖示，幾個人日常使用遠低於上限。
+
+### 注意
+- 兩個人**同時**修改**同一個角色**時，以最後存檔的為準；修改不同角色互不影響。
+- 本機模式的資料和雲端隊伍的資料是分開的；切換時不會互相覆蓋。
 
 ## 開發
 
 ```bash
-npm test     # 單元測試（Node 18+，無相依套件）
-npm start    # 以本機 http server 開啟（非必要，直接開 index.html 也可以）
+npm test            # 單元測試（Node 18+，不需安裝套件）
+npm start           # 以本機 http server 開啟 http://localhost:8080
+npm install && npm run test:rules   # 在 Firestore 模擬器上測試安全規則（需要 Java）
 ```
+
+開發時可在 `js/firebase-config.js` 加上 `emulator: { auth: 'http://127.0.0.1:9099', firestore: '127.0.0.1:8080' }`
+連到本機的 Firebase 模擬器（`npx firebase emulators:start --only firestore,auth --project demo-arrange`）。
 
 | 檔案 | 說明 |
 | --- | --- |
@@ -51,7 +108,12 @@ npm start    # 以本機 http server 開啟（非必要，直接開 index.html �
 | `js/store.js` | 資料模型：角色、分頁、道具、圖示庫，localStorage 存取 |
 | `js/search.js` | 跨角色搜尋、統計、分散道具分析 |
 | `js/scanner.js` | 掃圖核心：切格、空格判斷、圖示特徵比對、數字遮罩與模板學習 |
+| `js/sync.js` | 雲端同步：把資料拆成文件、只上傳變動、合併遠端變動 |
+| `js/cloud.js` | Firebase：Google 登入、隊伍建立／加入／退出、即時監看 |
+| `js/firebase-config.js` | Firebase 設定（null = 只用本機模式） |
 | `js/app.js` | 介面與互動 |
+| `firestore.rules` | Firestore 安全規則（只有隊伍成員能讀寫） |
 | `tests/` | `node:test` 單元測試 |
+| `tests-emulator/` | 安全規則測試（Firestore 模擬器） |
 
 所有 JS 都是一般 script（不是 ES module），所以用 `file://` 直接開啟也能運作。

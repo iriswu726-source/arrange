@@ -5,7 +5,13 @@
   "private": true,
   "scripts": {
     "start": "npx http-server . -p 8080 -c-1",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-arrange \"node --test tests-emulator/*.test.mjs\""
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^10.12.2",
+    "firebase-tools": "^13.0.0"
+  }
 }

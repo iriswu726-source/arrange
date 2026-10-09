@@ -5,6 +5,9 @@
   const S = window.ArrStore;
   const Q = window.ArrSearch;
   const SC = window.ArrScanner;
+  const Y = window.ArrSync;
+  const C = window.ArrCloud;
+  const CLOUD_KEY = 'artale-arrange-cloud';
   const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 
   let state = S.loadState(safeStorage());
@@ -26,6 +29,22 @@
   const $ = (sel, el) => (el || document).querySelector(sel);
   const main = $('#main');
 
+  /* 雲端共用狀態 */
+  const cloud = {
+    status: C && C.configured() ? 'loading' : 'off', // off | loading | signedout | ready | error
+    error: '',
+    user: null,
+    teamId: readCloudPref().teamId || null,
+    team: null,
+    teams: null,
+    sync: null,
+    loading: false,
+    localState: null,
+    unsubs: [],
+    pendingJoin: new URLSearchParams(location.search).get('join'),
+    uploadLocal: false,
+  };
+
   function safeStorage() {
     try {
       const k = '__t';
@@ -39,14 +58,20 @@
   }
 
   function save() {
-    state.settings.scan = {
+    const scanSettings = {
       rect: scan.rect, cols: scan.cols, rows: scan.rows, emptyThreshold: scan.emptyThreshold,
       maxDist: scan.maxDist, ocr: scan.ocr, digitThreshold: scan.digitThreshold, zoom: scan.zoom,
     };
+    // 雲端模式：資料推到隊伍，本機只存掃圖設定（本機資料原封不動保留）
+    const local = cloud.sync ? cloud.localState : state;
+    local.settings.scan = scanSettings;
     try {
-      S.saveState(localStorage, state);
+      S.saveState(localStorage, local);
     } catch (e) {
       toast('儲存失敗（瀏覽器空間不足？）請先匯出備份');
+    }
+    if (cloud.sync && !cloud.loading) {
+      cloud.sync.push(state).done.catch((err) => toast('雲端同步失敗：' + cloudError(err)));
     }
   }
 
@@ -94,7 +119,13 @@
     renderNav();
     renderSidebar();
     renderNames();
-    if (ui.view === 'bag') renderBag();
+    renderCloudChip();
+    if (cloud.loading && ui.view !== 'cloud') {
+      main.innerHTML = '<div class="empty">正在載入隊伍資料…</div>';
+      return;
+    }
+    if (ui.view === 'cloud') renderCloud();
+    else if (ui.view === 'bag') renderBag();
     else if (ui.view === 'search') renderSearch();
     else if (ui.view === 'scan') renderScan();
     else if (ui.view === 'icons') renderIcons();
@@ -736,6 +767,307 @@
       </div>`;
   }
 
+  /* ================= 雲端共用 ================= */
+
+  function readCloudPref() {
+    try { return JSON.parse(localStorage.getItem(CLOUD_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function writeCloudPref() {
+    try { localStorage.setItem(CLOUD_KEY, JSON.stringify({ teamId: cloud.teamId })); } catch (e) { /* 無法保存就算了 */ }
+  }
+
+  function cloudError(err) {
+    const code = err && err.code ? String(err.code) : '';
+    if (code.includes('permission-denied')) return '沒有權限（可能不是隊伍成員）';
+    if (code.includes('not-found')) return '找不到隊伍，請確認邀請碼';
+    if (code.includes('popup-closed') || code.includes('cancelled-popup')) return '登入視窗被關閉';
+    if (code.includes('unauthorized-domain')) return '這個網址尚未加入 Firebase 的授權網域';
+    if (code.includes('unavailable') || code.includes('network')) return '網路連線問題';
+    return (err && err.message) || String(err);
+  }
+
+  function initCloud() {
+    if (!C || !C.configured()) return;
+    C.init(onUser).catch((err) => {
+      cloud.status = 'error';
+      cloud.error = cloudError(err);
+      renderCloudChip();
+      if (ui.view === 'cloud') renderCloud();
+    });
+  }
+
+  async function onUser(user) {
+    cloud.user = user;
+    cloud.status = user ? 'ready' : 'signedout';
+    cloud.teams = null;
+    if (!user) {
+      disconnectTeam();
+    } else {
+      if (cloud.pendingJoin) {
+        const id = cloud.pendingJoin;
+        cloud.pendingJoin = null;
+        history.replaceState(null, '', location.pathname);
+        await joinFlow(id);
+      } else if (cloud.teamId && !cloud.sync) {
+        connectTeam(cloud.teamId);
+      }
+      if (!cloud.sync) loadTeams();
+    }
+    render();
+  }
+
+  async function loadTeams() {
+    try {
+      cloud.teams = await C.myTeams();
+    } catch (err) {
+      cloud.teams = [];
+      toast('讀取隊伍失敗：' + cloudError(err));
+    }
+    if (ui.view === 'cloud') renderCloud();
+  }
+
+  function connectTeam(teamId) {
+    disconnectTeam();
+    cloud.teamId = teamId;
+    writeCloudPref();
+    cloud.localState = state;
+    state = S.createState();
+    state.settings = cloud.localState.settings;
+    cloud.sync = Y.createSync(C.backend(teamId));
+    cloud.loading = true;
+    const failed = (err) => {
+      toast('無法連到隊伍：' + cloudError(err) + '，已切回本機模式');
+      cloud.teamId = null;
+      writeCloudPref();
+      disconnectTeam();
+      loadTeams();
+      render();
+    };
+    cloud.unsubs.push(C.watchTeam(teamId, (t) => {
+      cloud.team = t;
+      renderCloudChip();
+      if (ui.view === 'cloud') renderCloud();
+    }, failed));
+    cloud.unsubs.push(C.watchData(teamId, (path, data) => cloud.sync.applyRemote(state, path, data), ({ ready, changed }) => {
+      if (!ready) return;
+      if (cloud.loading) {
+        cloud.loading = false;
+        if (cloud.uploadLocal) {
+          cloud.uploadLocal = false;
+          copyLocalIntoTeam();
+        }
+        ui.charId = state.characters[0] ? state.characters[0].id : null;
+        render();
+      } else if (changed) {
+        scheduleRender();
+      }
+    }, failed));
+    render();
+  }
+
+  function disconnectTeam() {
+    for (const u of cloud.unsubs) u();
+    cloud.unsubs = [];
+    cloud.sync = null;
+    cloud.team = null;
+    cloud.loading = false;
+    if (cloud.localState) {
+      state = cloud.localState;
+      cloud.localState = null;
+      ui.charId = state.characters[0] ? state.characters[0].id : null;
+    }
+  }
+
+  /* 建立隊伍時把本機資料搬上去（保留原 id，本機資料不刪除）。 */
+  function copyLocalIntoTeam() {
+    const local = JSON.parse(JSON.stringify(cloud.localState));
+    state.characters = state.characters.concat(local.characters.filter((c) => !S.getCharacter(state, c.id)));
+    state.icons = state.icons.concat(local.icons.filter((ic) => !S.iconById(state, ic.id)));
+    state.digits = SC.mergeDigitTemplates(state.digits, local.digits || []);
+    save();
+    toast(`已把本機的 ${local.characters.length} 個角色上傳到隊伍`);
+  }
+
+  async function joinFlow(teamId) {
+    teamId = parseInvite(teamId);
+    if (!teamId) { toast('邀請碼格式不正確'); return; }
+    if (!confirm('要加入這個隊伍嗎？加入後可以和隊友一起編輯所有角色的背包。')) return;
+    try {
+      await C.joinTeam(teamId);
+      connectTeam(teamId);
+      toast('已加入隊伍');
+    } catch (err) {
+      toast('加入失敗：' + cloudError(err));
+    }
+  }
+
+  function parseInvite(text) {
+    const t = String(text || '').trim();
+    const m = t.match(/[?&]join=([A-Za-z0-9_-]+)/);
+    const id = m ? m[1] : t;
+    return /^[A-Za-z0-9_-]{6,64}$/.test(id) ? id : '';
+  }
+
+  function inviteLink() {
+    return location.origin + location.pathname + '?join=' + encodeURIComponent(cloud.teamId);
+  }
+
+  /* 遠端有變動時重畫。欄位裡有還沒送出的輸入時，等使用者離開欄位再畫，避免打字被打斷；
+   * 否則直接重畫並把游標放回原本的欄位。 */
+  let renderDeferred = false;
+  function scheduleRender() {
+    const a = document.activeElement;
+    const editing = a && main.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName);
+    if (editing && a.type !== 'checkbox' && a.value !== a.defaultValue) {
+      if (!renderDeferred) {
+        renderDeferred = true;
+        a.addEventListener('blur', () => { renderDeferred = false; setTimeout(scheduleRender, 0); }, { once: true });
+      }
+      return;
+    }
+    const refocus = editing ? (a.id ? '#' + a.id : a.form && a.form.id && a.name ? `#${a.form.id} [name="${a.name}"]` : null) : null;
+    if (ui.view === 'scan') { renderSidebar(); renderNames(); renderCloudChip(); return; }
+    render();
+    const el = refocus && $(refocus);
+    if (el) el.focus();
+  }
+
+  function renderCloudChip() {
+    const chip = $('#cloudChip');
+    if (!chip) return;
+    let text = '本機模式', cls = '';
+    if (cloud.sync) {
+      text = '☁ ' + (cloud.team ? cloud.team.name : '隊伍') + (cloud.loading ? '（載入中）' : '');
+      cls = 'on';
+    } else if (cloud.status === 'error') { text = '雲端錯誤'; cls = 'err'; }
+    chip.textContent = text;
+    chip.className = 'cloud-chip ' + cls;
+    chip.hidden = cloud.status === 'off';
+  }
+
+  function renderCloud() {
+    // 重畫時保留使用者已輸入的內容（例如隊伍清單載入完成時）
+    const keep = {};
+    for (const id of ['newTeamName', 'joinCode']) { const el = $('#' + id); if (el) keep[id] = el.value; }
+    const up = $('#uploadLocal');
+    const box = (inner) => {
+      main.innerHTML = `<div class="cloud-view">${inner}</div>`;
+      for (const [id, v] of Object.entries(keep)) { const el = $('#' + id); if (el) el.value = v; }
+      if (up && $('#uploadLocal')) $('#uploadLocal').checked = up.checked;
+    };
+    if (cloud.status === 'off') {
+      box(`<div class="panel"><h3>和朋友共用背包資料</h3>
+        <p>目前是<b>本機模式</b>：資料只存在這個瀏覽器。</p>
+        <p>要和朋友一起管理角色，需要先設定免費的 Firebase 雲端資料庫，並把網頁放到網路上（例如 GitHub Pages）。
+        設定步驟請看專案 README 的「雲端共用設定」，完成後把設定貼到 <code>js/firebase-config.js</code>。</p></div>`);
+      return;
+    }
+    if (location.protocol === 'file:') {
+      box(`<div class="panel"><h3>需要用網址開啟</h3>
+        <p>Google 登入不能在「直接開啟檔案」（file://）的情況下使用。請改用 GitHub Pages 的網址，或在專案資料夾執行 <code>npm start</code> 後開啟 <code>http://localhost:8080</code>。</p></div>`);
+      return;
+    }
+    if (cloud.status === 'loading') { box('<div class="empty">連線中…</div>'); return; }
+    if (cloud.status === 'error') {
+      box(`<div class="panel"><h3>無法連線到雲端</h3><p class="status-new">${esc(cloud.error)}</p>
+        <button class="btn" data-act="cloud-retry">重試</button></div>`);
+      return;
+    }
+    if (cloud.status === 'signedout' || !cloud.user) {
+      box(`<div class="panel"><h3>登入以使用雲端共用</h3>
+        <p>用 Google 帳號登入後，可以建立隊伍或用朋友給的邀請連結加入，一起編輯所有角色的背包。</p>
+        ${cloud.pendingJoin ? '<p class="status-guess">你開啟了邀請連結，登入後就會詢問是否加入。</p>' : ''}
+        <button class="btn primary" data-act="cloud-signin">用 Google 登入</button></div>`);
+      return;
+    }
+    const u = cloud.user;
+    const account = `<div class="panel row spread"><span>已登入：<b>${esc(u.displayName || u.email)}</b> <span class="muted small">${esc(u.email || '')}</span></span>
+      <button class="btn small" data-act="cloud-signout">登出</button></div>`;
+    if (cloud.sync) {
+      const t = cloud.team;
+      const isOwner = t && t.owner === u.uid;
+      const members = t ? t.members.map((id) => {
+        const info = (t.memberInfo && t.memberInfo[id]) || {};
+        return `<li class="row spread"><span>${esc(info.name || info.email || '成員')} <span class="muted small">${esc(info.email || '')}</span>
+          ${id === t.owner ? '<span class="badge">隊長</span>' : ''}${id === u.uid ? '<span class="badge">你</span>' : ''}</span>
+          ${isOwner && id !== u.uid ? `<button class="btn small danger" data-act="cloud-kick" data-uid="${esc(id)}">移出</button>` : ''}</li>`;
+      }).join('') : '';
+      box(`${account}
+        <div class="panel">
+          <div class="row spread"><h3>目前隊伍：<input id="teamName" value="${esc(t ? t.name : '')}" maxlength="40" style="font-weight:600"></h3>
+            <span class="status-ok small">● 即時同步中</span></div>
+          <p class="muted small">所有角色、道具、圖示庫、數字模板都和隊友共用；任何人修改，其他人畫面會自動更新。</p>
+          <h3 style="margin:14px 0 6px">邀請朋友</h3>
+          <div class="row"><input id="inviteLink" readonly value="${esc(inviteLink())}" style="flex:1;min-width:200px">
+            <button class="btn primary" data-act="cloud-copy">複製連結</button></div>
+          <p class="muted small">把連結傳給朋友，朋友用 Google 登入後就能加入。<b>拿到連結的人都能加入</b>，請只傳給信任的人；隊長可以把成員移出。</p>
+          <h3 style="margin:14px 0 6px">成員（${t ? t.members.length : 0}）</h3>
+          <ul class="member-list">${members}</ul>
+          <div class="row" style="margin-top:14px">
+            <button class="btn" data-act="cloud-local">切回本機模式</button>
+            ${isOwner ? '' : '<button class="btn danger" data-act="cloud-leave">退出隊伍</button>'}
+          </div>
+        </div>`);
+      return;
+    }
+    const teams = cloud.teams;
+    box(`${account}
+      ${teams && teams.length ? `<div class="panel"><h3>我的隊伍</h3><ul class="member-list">${teams.map((t) => `
+        <li class="row spread"><span><b>${esc(t.name)}</b> <span class="muted small">${t.members.length} 位成員</span></span>
+        <button class="btn small primary" data-act="cloud-open" data-team="${esc(t.id)}">進入</button></li>`).join('')}</ul></div>` : ''}
+      ${teams === null ? '<div class="panel muted">讀取隊伍中…</div>' : ''}
+      <div class="panel"><h3>建立新隊伍</h3>
+        <div class="row" style="margin-top:8px"><input id="newTeamName" placeholder="隊伍名稱" maxlength="40" style="flex:1;min-width:160px">
+          <button class="btn primary" data-act="cloud-create">建立</button></div>
+        <label class="row small" style="margin-top:8px"><input type="checkbox" id="uploadLocal" ${state.characters.length ? 'checked' : ''}>
+          把目前本機的資料（${state.characters.length} 個角色、${state.icons.length} 個圖示）一起上傳到新隊伍</label></div>
+      <div class="panel"><h3>加入朋友的隊伍</h3>
+        <div class="row" style="margin-top:8px"><input id="joinCode" placeholder="貼上邀請連結或邀請碼" style="flex:1;min-width:200px">
+          <button class="btn" data-act="cloud-join">加入</button></div></div>`);
+  }
+
+  async function cloudAction(act, b) {
+    try {
+      if (act === 'cloud-signin') await C.signIn();
+      else if (act === 'cloud-signout') { await C.signOut(); setView('cloud'); }
+      else if (act === 'cloud-retry') { cloud.status = 'loading'; renderCloud(); initCloud(); }
+      else if (act === 'cloud-create') {
+        const name = $('#newTeamName').value.trim() || '我的隊伍';
+        cloud.uploadLocal = $('#uploadLocal').checked;
+        const id = await C.createTeam(name);
+        connectTeam(id);
+        toast('隊伍已建立，複製邀請連結給朋友吧');
+      } else if (act === 'cloud-join') await joinFlow($('#joinCode').value);
+      else if (act === 'cloud-open') connectTeam(b.dataset.team);
+      else if (act === 'cloud-local') {
+        cloud.teamId = null;
+        writeCloudPref();
+        disconnectTeam();
+        loadTeams();
+        render();
+        toast('已切回本機模式（隊伍資料仍保留在雲端）');
+      } else if (act === 'cloud-leave') {
+        if (!confirm('確定退出隊伍？退出後就看不到隊伍資料，需要重新邀請才能加入。')) return;
+        const id = cloud.teamId;
+        cloud.teamId = null;
+        writeCloudPref();
+        disconnectTeam();
+        await C.leaveTeam(id);
+        loadTeams();
+        render();
+      } else if (act === 'cloud-kick') {
+        const info = (cloud.team.memberInfo || {})[b.dataset.uid] || {};
+        if (confirm(`把 ${info.name || info.email || '這位成員'} 移出隊伍？`)) await C.leaveTeam(cloud.teamId, b.dataset.uid);
+      } else if (act === 'cloud-copy') {
+        const inp = $('#inviteLink');
+        try { await navigator.clipboard.writeText(inp.value); } catch (e) { inp.select(); document.execCommand('copy'); }
+        toast('邀請連結已複製');
+      }
+    } catch (err) {
+      toast(cloudError(err));
+    }
+  }
+
   /* ================= 事件 ================= */
 
   function addCharacterFlow() {
@@ -748,6 +1080,7 @@
   }
 
   $('#addCharBtn').addEventListener('click', addCharacterFlow);
+  $('#cloudChip').addEventListener('click', () => setView('cloud'));
 
   $('#charList').addEventListener('click', (e) => {
     const li = e.target.closest('li[data-char]');
@@ -806,7 +1139,9 @@
     if (!f) return;
     try {
       const data = S.normalizeState(JSON.parse(await f.text()));
-      if (!confirm(`匯入 ${data.characters.length} 個角色、${data.icons.length} 個圖示？目前的資料會被取代（建議先匯出備份）。`)) return;
+      const where = cloud.sync ? `隊伍「${cloud.team ? cloud.team.name : ''}」的資料（所有成員都會受影響）` : '目前的資料';
+      if (!confirm(`匯入 ${data.characters.length} 個角色、${data.icons.length} 個圖示？${where}會被取代（建議先匯出備份）。`)) return;
+      if (cloud.sync) data.settings = state.settings;
       state = data;
       ui.charId = state.characters[0] ? state.characters[0].id : null;
       Object.assign(scan, scanDefaults, state.settings.scan || {});
@@ -832,6 +1167,7 @@
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const act = b.dataset.act;
+    if (act.startsWith('cloud-')) { cloudAction(act, b); return; }
     const ch = currentChar();
     const tr = b.closest('tr');
     if (act === 'add-char') addCharacterFlow();
@@ -966,6 +1302,10 @@
       renderResults();
       return;
     }
+    if (t.id === 'teamName' && cloud.teamId) {
+      C.renameTeam(cloud.teamId, t.value).catch((err) => toast(cloudError(err)));
+      return;
+    }
     if (t.id === 'scanChar') { scan.charId = t.value; renderScanResults(); }
     else if (t.id === 'scanTab') { scan.tab = t.value; scan.rows_ = []; renderScanResults(); drawCanvas(); }
     else if (t.id === 'scanOcr') scan.ocr = t.checked;
@@ -1030,5 +1370,7 @@
 
   window.addEventListener('resize', () => { if (ui.view === 'scan' && scan.zoom === 'fit') drawCanvas(); });
 
+  if (cloud.pendingJoin) ui.view = 'cloud';
   render();
+  initCloud();
 })();

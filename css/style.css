@@ -220,6 +220,20 @@ table.stats th:first-child, table.stats td:first-child { text-align: left; }
 .icon-card .fields { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .icon-card input, .icon-card select { padding: 3px 6px; font-size: 13px; }
 
+/* ---------- cloud ---------- */
+.cloud-chip {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 2px 10px; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.cloud-chip.on { color: var(--ok); border-color: var(--ok); }
+.cloud-chip.err { color: var(--danger); border-color: var(--danger); }
+.cloud-view { max-width: 720px; }
+.cloud-view h3 input { font-size: 15px; }
+.cloud-view p { margin: 8px 0; }
+.member-list { list-style: none; padding: 0; margin: 6px 0 0; }
+.member-list li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
 /* ---------- dialog / toast ---------- */
 .dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 300px; }
 .dialog::backdrop { background: rgba(0, 0, 0, .55); }
