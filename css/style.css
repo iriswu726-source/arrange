@@ -101,6 +101,7 @@ h2, h3 { margin: 0; }
   background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 12px;
 }
 .sidebar-stats { margin-top: 16px; color: var(--muted); font-size: 12px; }
+.app-version { margin-top: 10px; color: var(--muted); font-size: 11px; opacity: .7; }
 
 /* ---------- common ---------- */
 .btn {

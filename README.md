@@ -136,3 +136,4 @@ npm install && npm run test:rules   # 在 Firestore 模擬器上測試安全規�
 | `tests-emulator/` | 安全規則測試（Firestore 模擬器） |
 
 所有 JS 都是一般 script（不是 ES module），所以用 `file://` 直接開啟也能運作。
+更新程式後請把 `index.html` 裡的版本號（`?v=…` 與左下角顯示的版本）一起改掉，避免瀏覽器用到快取的舊檔。
