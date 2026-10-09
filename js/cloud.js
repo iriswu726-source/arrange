@@ -5,7 +5,6 @@
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
   const SDK_FILES = ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js'];
-  const COLLECTIONS = ['characters', 'icons', 'meta'];
 
   let fb = null; // { auth, db }
   let initPromise = null;
@@ -138,23 +137,92 @@
    * 自己尚未送達伺服器的寫入（hasPendingWrites）不回報，避免回音。 */
   function watchData(teamId, onChange, onBatch, onError) {
     const loaded = new Set();
-    const unsubs = COLLECTIONS.map((coll) =>
-      fb.db.collection('teams').doc(teamId).collection(coll).onSnapshot((snap) => {
+    const total = 3;
+    const team = fb.db.collection('teams').doc(teamId);
+    const unsubs = ['characters', 'icons'].map((coll) =>
+      team.collection(coll).onSnapshot((snap) => {
         let changed = false;
         for (const ch of snap.docChanges()) {
           if (ch.doc.metadata.hasPendingWrites) continue;
           if (onChange(coll + '/' + ch.doc.id, ch.type === 'removed' ? null : ch.doc.data())) changed = true;
         }
         loaded.add(coll);
-        onBatch({ ready: loaded.size === COLLECTIONS.length, changed });
+        onBatch({ ready: loaded.size === total, changed });
       }, onError)
     );
+    // meta 只監看數字模板；圖鑑（meta/catalog-*）很大，只在有新版本時另外下載
+    unsubs.push(team.collection('meta').doc('digits').onSnapshot((snap) => {
+      let changed = false;
+      if (!snap.metadata.hasPendingWrites) changed = onChange('meta/digits', snap.exists ? snap.data() : null);
+      loaded.add('meta');
+      onBatch({ ready: loaded.size === total, changed });
+    }, onError));
     return () => unsubs.forEach((u) => u());
+  }
+
+  /* ---------- 隊伍共用的道具圖鑑 ----------
+   * 圖鑑打包成幾份大文件（meta/catalog-0、catalog-1…，每份 < 1MB），版本資訊在 meta/catalogInfo。
+   * 同一份文件內相同的圖片只存一次（例如所有 60% 捲軸）。 */
+  const CHUNK_LIMIT = 700000;
+
+  function packCatalog(items) {
+    const chunks = [];
+    let cur = null, size = 0, idx = null;
+    const start = () => { cur = { items: [], imgs: [] }; size = 0; idx = new Map(); };
+    start();
+    for (const it of items) {
+      const need = (idx.has(it.img) ? 0 : it.img.length) + 200 + (it.name.length + (it.nameEn || '').length) * 3;
+      if (cur.items.length && size + need > CHUNK_LIMIT) { chunks.push(cur); start(); }
+      let k = idx.get(it.img);
+      if (k === undefined) { k = cur.imgs.length; cur.imgs.push(it.img); idx.set(it.img, k); }
+      cur.items.push({ id: it.id, name: it.name, nameEn: it.nameEn || '', section: it.section || '', category: it.category || '', img: k });
+      size += need;
+    }
+    if (cur.items.length) chunks.push(cur);
+    return chunks;
+  }
+
+  async function uploadCatalog(teamId, items, onProgress) {
+    const meta = fb.db.collection('teams').doc(teamId).collection('meta');
+    const prev = await meta.doc('catalogInfo').get();
+    const prevChunks = prev.exists ? Number(prev.data().chunks) || 0 : 0;
+    const chunks = packCatalog(items);
+    for (let i = 0; i < chunks.length; i++) {
+      await meta.doc('catalog-' + i).set(chunks[i]);
+      if (onProgress) onProgress((i + 1) / (chunks.length + 1));
+    }
+    for (let i = chunks.length; i < prevChunks; i++) await meta.doc('catalog-' + i).delete();
+    const u = currentUser();
+    const info = { version: Date.now(), chunks: chunks.length, count: items.length, by: u.uid, byName: u.displayName || u.email || '' };
+    await meta.doc('catalogInfo').set(info);
+    return info;
+  }
+
+  async function downloadCatalog(teamId, info, onProgress) {
+    const meta = fb.db.collection('teams').doc(teamId).collection('meta');
+    const items = [];
+    for (let i = 0; i < info.chunks; i++) {
+      const snap = await meta.doc('catalog-' + i).get();
+      if (!snap.exists) continue;
+      const d = snap.data();
+      for (const it of d.items || []) items.push(Object.assign({}, it, { img: (d.imgs || [])[it.img] || '' }));
+      if (onProgress) onProgress((i + 1) / info.chunks);
+    }
+    return items;
+  }
+
+  /* 監看隊伍圖鑑的版本資訊；自己剛寫入、還沒送達的不回報。 */
+  function watchCatalogInfo(teamId, onInfo) {
+    return fb.db.collection('teams').doc(teamId).collection('meta').doc('catalogInfo').onSnapshot((snap) => {
+      if (snap.metadata.hasPendingWrites) return;
+      onInfo(snap.exists ? snap.data() : null);
+    }, () => onInfo(null));
   }
 
   root.ArrCloud = {
     configured: () => !!config(),
     init, currentUser, signIn, signOut,
     createTeam, joinTeam, leaveTeam, renameTeam, myTeams, watchTeam, backend, watchData,
+    uploadCatalog, downloadCatalog, watchCatalogInfo, packCatalog,
   };
 })(typeof self !== 'undefined' ? self : this);

@@ -48,6 +48,8 @@
     unsubs: [],
     pendingJoin: new URLSearchParams(location.search).get('join'),
     uploadLocal: false,
+    catInfo: null, // 隊伍圖鑑版本資訊
+    catBusy: false,
   };
 
   function safeStorage() {
@@ -855,6 +857,74 @@
 
   /* ================= 道具圖鑑 ================= */
 
+  /* 隊伍共用圖鑑：本機已下載的版本（每個隊伍各記一個） */
+  const CAT_VER_KEY = 'artale-catalog-team-version';
+  function localCatVersion(teamId) {
+    try { return (JSON.parse(localStorage.getItem(CAT_VER_KEY)) || {})[teamId] || 0; } catch (e) { return 0; }
+  }
+  function setLocalCatVersion(teamId, v) {
+    try {
+      const m = JSON.parse(localStorage.getItem(CAT_VER_KEY)) || {};
+      m[teamId] = v;
+      localStorage.setItem(CAT_VER_KEY, JSON.stringify(m));
+    } catch (e) { /* 存不了就下次再下載 */ }
+  }
+
+  function teamCatalogHtml() {
+    if (!cloud.sync) return '';
+    const info = cloud.catInfo;
+    const when = info ? new Date(info.version).toLocaleString('zh-TW', { hour12: false }) : '';
+    return `<div class="team-catalog">
+      <b>隊伍圖鑑：</b>${info ? `${info.count} 個（${esc(when)}${info.byName ? ' 由 ' + esc(info.byName) : ''} 上傳）` : '<span class="status-new">隊伍還沒有圖鑑</span>'}
+      ${cloud.catBusy ? '<span class="muted">　處理中…</span>' : catalog.length ? `<button class="btn small" data-act="cloud-upload-catalog">把我的圖鑑（${catalog.length} 個）上傳給隊伍</button>` : ''}
+    </div>`;
+  }
+
+  /* 隊伍圖鑑有新版本 → 自動下載並匯入 */
+  function onTeamCatalog(info) {
+    cloud.catInfo = info;
+    if (info && cloud.teamId && info.version > localCatVersion(cloud.teamId) && !cloud.catBusy) downloadTeamCatalog(cloud.teamId, info);
+    if (ui.view === 'icons') renderIcons();
+  }
+
+  async function downloadTeamCatalog(teamId, info) {
+    cloud.catBusy = true;
+    toast(`正在下載隊伍的道具圖鑑（${info.count} 個）…`);
+    try {
+      const items = await C.downloadCatalog(teamId, info);
+      await CAT.importData({ format: 'artale-catalog', version: 1, items });
+      catalog = await CAT.load();
+      indexCatalog();
+      setLocalCatVersion(teamId, info.version);
+      renderNames();
+      toast(`已下載隊伍圖鑑：${info.count} 個道具`);
+    } catch (err) {
+      toast('下載隊伍圖鑑失敗：' + cloudError(err));
+    }
+    cloud.catBusy = false;
+    if (ui.view === 'icons') renderIcons();
+  }
+
+  async function uploadTeamCatalog() {
+    if (!cloud.sync || !catalog.length) return;
+    const replace = cloud.catInfo ? `隊伍目前的圖鑑（${cloud.catInfo.count} 個）會被取代。` : '';
+    if (!confirm(`把這台電腦的道具圖鑑（${catalog.length} 個）上傳給隊伍？${replace}隊友和你的其他電腦打開工具時會自動下載。`)) return;
+    cloud.catBusy = true;
+    renderIcons();
+    toast('上傳圖鑑中…');
+    try {
+      const items = catalog.map((it) => ({ id: it.id, name: it.name, nameEn: it.nameEn, section: it.section, category: it.category, img: it.img }));
+      const info = await C.uploadCatalog(cloud.teamId, items);
+      setLocalCatVersion(cloud.teamId, info.version);
+      cloud.catInfo = info;
+      toast(`已上傳 ${info.count} 個道具（${info.chunks} 份）給隊伍`);
+    } catch (err) {
+      toast('上傳失敗：' + cloudError(err));
+    }
+    cloud.catBusy = false;
+    renderIcons();
+  }
+
   function loadCatalog() {
     if (!CAT) return;
     CAT.load().then((items) => {
@@ -899,7 +969,8 @@
       ${catalog.length ? `<p class="muted">${Object.entries(bySec).map(([k, n]) => `${esc(k)} ${n}`).join('、')}</p>` : ''}
       <p class="muted" style="margin-bottom:0">掃圖時，圖示庫沒學過的格子會跟圖鑑比對：很像的自動填名稱，不確定的列出候選圖讓你點。
       取得圖鑑：按「複製匯出程式」→ 打開 <a href="https://www.artalemaplestory.com/zh/equipment" target="_blank" rel="noopener">artalemaplestory.com</a> 的道具列表 → F12 → Console 貼上執行 → 匯入下載的檔案。
-      圖鑑只存在這台電腦的瀏覽器裡。</p>
+      圖鑑存在這台電腦的瀏覽器裡；加入雲端隊伍後，可以上傳給隊伍，其他電腦和隊友會自動下載。</p>
+      ${teamCatalogHtml()}
       <div class="progress" id="catalogProgress" hidden><div></div></div>
       <input id="catalogFile" type="file" accept="application/json,.json" hidden>
     </div>`;
@@ -1021,6 +1092,7 @@
       renderCloudChip();
       if (ui.view === 'cloud') renderCloud();
     }, failed));
+    cloud.unsubs.push(C.watchCatalogInfo(teamId, onTeamCatalog));
     cloud.unsubs.push(C.watchData(teamId, (path, data) => cloud.sync.applyRemote(state, path, data), ({ ready, changed }) => {
       if (!ready) return;
       if (cloud.loading) {
@@ -1043,6 +1115,7 @@
     cloud.unsubs = [];
     cloud.sync = null;
     cloud.team = null;
+    cloud.catInfo = null;
     cloud.loading = false;
     if (cloud.localState) {
       state = cloud.localState;
@@ -1231,6 +1304,8 @@
       } else if (act === 'cloud-kick') {
         const info = (cloud.team.memberInfo || {})[b.dataset.uid] || {};
         if (confirm(`把 ${info.name || info.email || '這位成員'} 移出隊伍？`)) await C.leaveTeam(cloud.teamId, b.dataset.uid);
+      } else if (act === 'cloud-upload-catalog') {
+        await uploadTeamCatalog();
       } else if (act === 'cloud-copy') {
         const inp = $('#inviteLink');
         try { await navigator.clipboard.writeText(inp.value); } catch (e) { inp.select(); document.execCommand('copy'); }
