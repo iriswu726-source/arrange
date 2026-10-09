@@ -1,21 +1,22 @@
 :root {
-  --bg: #16171d;
-  --panel: #20222b;
-  --panel-2: #2a2d38;
-  --line: #383c4a;
-  --text: #e8e9ee;
-  --muted: #9a9fb0;
-  --accent: #f0a23b;
-  --accent-2: #ffcf7a;
-  --danger: #e5604f;
-  --ok: #5cc98a;
-  --warn: #e8c14f;
-  --radius: 8px;
-  --tab-equip: #6aa8ff;
-  --tab-use: #ff7b7b;
-  --tab-setup: #c792ff;
-  --tab-etc: #7fd8a6;
-  --tab-special: #ffd166;
+  /* 莫蘭迪配色：低飽和的灰粉、灰綠 */
+  --bg: #ece7e2;
+  --panel: #f6f3ef;
+  --panel-2: #e9e3dd;
+  --line: #d4cbc2;
+  --text: #4a4440;
+  --muted: #8c827a;
+  --accent: #a97f7a;
+  --accent-2: #6f8478;
+  --danger: #a85f5f;
+  --ok: #5f7f6e;
+  --warn: #a07e48;
+  --radius: 10px;
+  --tab-equip: #6f8fae;
+  --tab-use: #b07070;
+  --tab-setup: #9a84ad;
+  --tab-etc: #6f9a80;
+  --tab-special: #b0925a;
 }
 
 * { box-sizing: border-box; }
@@ -113,7 +114,7 @@ h2, h3 { margin: 0; }
   white-space: nowrap;
 }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: var(--accent); color: #1b1407; border-color: var(--accent); font-weight: 600; }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
 .btn.primary:hover { background: var(--accent-2); }
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
@@ -188,7 +189,7 @@ table.items input.inline.qty { width: 90px; }
 }
 .chip:hover { border-color: var(--accent); }
 .chip b { color: var(--accent-2); font-weight: 600; }
-mark { background: rgba(240, 162, 59, .35); color: inherit; border-radius: 2px; }
+mark { background: rgba(169, 127, 122, .3); color: inherit; border-radius: 2px; }
 table.stats { border-collapse: collapse; width: 100%; }
 table.stats th, table.stats td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: center; }
 table.stats th:first-child, table.stats td:first-child { text-align: left; }
@@ -200,7 +201,7 @@ table.stats th:first-child, table.stats td:first-child { text-align: left; }
   color: var(--muted); cursor: pointer;
 }
 .dropzone.over { border-color: var(--accent); color: var(--text); }
-.canvas-wrap { position: relative; overflow: auto; max-height: 70vh; max-width: 100%; width: fit-content; border: 1px solid var(--line); border-radius: var(--radius); background: #000; }
+.canvas-wrap { position: relative; overflow: auto; max-height: 70vh; max-width: 100%; width: fit-content; border: 1px solid var(--line); border-radius: var(--radius); background: #3a3532; }
 .canvas-wrap canvas { display: block; cursor: crosshair; image-rendering: pixelated; }
 .scan-side label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .scan-side .rect-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
@@ -217,7 +218,7 @@ table.stats th:first-child, table.stats td:first-child { text-align: left; }
 .cands { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
 .cand {
   width: 34px; height: 34px; padding: 2px; border-radius: 4px; cursor: pointer;
-  background: #d9dde6; border: 2px solid transparent;
+  background: var(--panel-2); border: 2px solid transparent;
 }
 .cand img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
 .cand:hover { border-color: var(--accent); }
@@ -228,7 +229,7 @@ table.stats th:first-child, table.stats td:first-child { text-align: left; }
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
 }
 .pct:hover { border-color: var(--accent); }
-.pct.on { background: var(--accent); color: #1b1407; border-color: var(--accent); }
+.pct.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ---------- icons ---------- */
 .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
@@ -283,3 +284,22 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
   .scan-grid { grid-template-columns: 1fr; }
   .main { padding: 14px; }
 }
+
+/* ---------- 莫蘭迪主題細節 ---------- */
+.topbar { background: #ddd5cd; border-bottom: 1px solid #c9bfb5; }
+.brand { color: var(--accent); font-weight: 600; }
+.brand span { color: var(--accent-2); }
+.nav button { color: #6f655e; }
+.nav button:hover { background: #e9e3dd; }
+.nav button.active { background: var(--accent); color: #f6f3ef; }
+.sidebar { background: #e3ddd6; }
+.panel, table.items { box-shadow: 0 2px 10px rgba(74, 68, 64, .06); }
+.btn { background: #f1ece6; }
+.btn.primary:hover { background: #9a706b; border-color: #9a706b; }
+.char-list li.active { background: var(--panel); border-color: #b8a59d; }
+.tabs button.active { color: var(--accent); border-bottom-color: var(--accent-2); }
+input, select { background: #fbf9f6; }
+.thumb-img { background: var(--panel-2); }
+.toast { background: var(--panel); color: var(--text); box-shadow: 0 6px 24px rgba(74, 68, 64, .18); }
+.dialog::backdrop { background: rgba(74, 68, 64, .35); }
+.cloud-chip { background: var(--panel); }
