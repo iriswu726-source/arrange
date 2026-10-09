@@ -43,6 +43,15 @@
     return out;
   }
 
+  /* 捲軸成功率：「頭盔防禦卷軸 60%」→ pct '60%'、base '頭盔防禦卷軸' */
+  function pctOf(name) {
+    const m = String(name || '').match(/(\d{1,3})\s*[%％]/);
+    return m ? m[1] + '%' : '';
+  }
+  function baseOf(name) {
+    return String(name || '').replace(/[\s(（]*\d{1,3}\s*[%％][)）]?/, '').replace(/\s+/g, ' ').trim();
+  }
+
   function hasStats(stats) {
     return !!stats && Object.keys(stats).length > 0;
   }
@@ -336,7 +345,7 @@
 
   const api = {
     TABS, TAB_IDS, STORAGE_KEY, VERSION,
-    STAT_FIELDS, cleanStats, hasStats, statsSummary,
+    STAT_FIELDS, cleanStats, hasStats, statsSummary, pctOf, baseOf,
     uid, tabName, createState, normalizeState, loadState, saveState,
     getCharacter, addCharacter, updateCharacter, removeCharacter, moveCharacter,
     getTab, addItem, findItem, updateItem, removeItem, moveItem, applyItems, sortTab,

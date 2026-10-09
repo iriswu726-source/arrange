@@ -107,13 +107,29 @@
 
   /* 圖鑑中同名道具的原始圖片（優先同分頁）。 */
   let catalogByName = new Map();
+  let catalogVariants = new Map(); // 捲軸：基本名稱 → 各成功率的圖鑑道具
   function indexCatalog() {
     catalogByName = new Map();
+    catalogVariants = new Map();
     for (const it of catalog) {
       const list = catalogByName.get(it.name) || [];
       list.push(it);
       catalogByName.set(it.name, list);
+      if (S.pctOf(it.name)) {
+        const base = S.baseOf(it.name);
+        const vs = catalogVariants.get(base) || [];
+        if (!vs.some((v) => v.name === it.name)) vs.push(it);
+        catalogVariants.set(base, vs);
+      }
     }
+    for (const [base, vs] of catalogVariants) {
+      if (vs.length < 2) catalogVariants.delete(base);
+      else vs.sort((a, b) => parseInt(S.pctOf(a.name), 10) - parseInt(S.pctOf(b.name), 10));
+    }
+  }
+  /* 這個名稱有多種成功率時，回傳全部成功率版本；否則 null。 */
+  function variantsFor(name) {
+    return name ? catalogVariants.get(S.baseOf(name)) || null : null;
   }
   function catalogImg(name, tab) {
     const list = catalogByName.get(name);
@@ -649,14 +665,26 @@
         remember: true,
       };
       // 圖示庫沒學過的，拿去跟道具圖鑑比
-      if (!r.icon && catalog.length) {
-        const ranked = SC.rankCatalog(SC.cellShape(scan.imgData, r.cell, scan.digitThreshold), catalog, scan.tab, 5);
+      const shape = !r.icon && catalog.length ? SC.cellShape(scan.imgData, r.cell, scan.digitThreshold) : null;
+      if (shape) {
+        const ranked = SC.rankCatalog(shape, catalog, scan.tab, 5);
         row.cands = ranked.map((c) => ({ name: c.item.name, img: c.item.img, dist: c.dist }));
         const [best, second] = ranked;
         if (best && best.dist <= CAT_AUTO && (!second || second.dist - best.dist >= CAT_MARGIN)) {
           row.name = best.item.name;
           row.catAuto = true;
           row.dist = best.dist;
+        }
+      }
+      // 捲軸：同一種有多個成功率（圖示通常一樣），要讓使用者選成功率
+      const vars = variantsFor(row.name || (row.cands[0] && row.cands[0].name));
+      if (vars) {
+        row.variants = vars.map((v) => ({ name: v.name, pct: S.pctOf(v.name) }));
+        row.pctConfirm = true;
+        if (row.catAuto && shape) {
+          // 只有各成功率的圖片明顯不同時才自動選，否則留空等使用者點
+          const ds = vars.map((v) => SC.shapeDistance(shape, v.shape)).sort((a, b) => a - b);
+          if (ds.length > 1 && ds[1] - ds[0] < CAT_MARGIN) { row.name = ''; row.catAuto = false; }
         }
       }
       return row;
@@ -753,11 +781,16 @@
   }
 
   function statusHtml(r) {
-    if (r.iconId && r.name) return `<span class="status-ok">✓ 已辨識 ${Math.round((1 - r.dist) * 100)}%</span>`;
+    const pcts = r.variants && r.variants.length
+      ? `<div class="pcts">${r.name && r.pctConfirm ? '<span class="status-guess">請確認成功率</span>' : r.name ? '' : `<span class="status-new">${esc(S.baseOf(r.variants[0].name))}：請選成功率</span>`}
+          ${r.variants.map((v, i) => `<button class="pct ${v.name === r.name ? 'on' : ''}" data-act="use-variant" data-v="${i}" title="${esc(v.name)}">${esc(v.pct)}</button>`).join('')}</div>`
+      : '';
+    if (r.iconId && r.name) return `<span class="status-ok">✓ 已辨識 ${Math.round((1 - r.dist) * 100)}%</span>` + pcts;
     let html = '';
     if (r.catAuto && r.name) html = `<span class="status-guess">圖鑑比對 ${Math.round((1 - r.dist) * 100)}%</span>`;
     else if (r.guess) html = `<span class="status-guess">相似：${esc(r.guess)} <button class="btn small" data-act="use-guess">套用</button></span>`;
     else if (!r.name) html = '<span class="status-new">新圖示</span>';
+    html += pcts;
     if (r.cands && r.cands.length) {
       html += `<div class="cands">${r.cands.map((c, i) => `<button class="cand ${c.name === r.name ? 'on' : ''}" data-act="use-cand" data-c="${i}" title="${esc(c.name)}（${Math.round((1 - c.dist) * 100)}%）"><img src="${esc(c.img)}" alt=""></button>`).join('')}</div>`;
     }
@@ -769,8 +802,9 @@
   /* 填入名稱後，自動帶給其他相同圖示且尚未命名的格子。 */
   function propagateName(src) {
     let n = 0;
+    if (src.variants) return 0; // 捲軸成功率每張分別選，不自動帶入
     for (const r of scan.rows_) {
-      if (r === src || r.name.trim()) continue;
+      if (r === src || r.name.trim() || r.variants) continue;
       if (SC.featureDistance(r.feat, src.feat) <= scan.maxDist) { r.name = src.name; n++; }
     }
     return n;
@@ -1335,11 +1369,21 @@
     else if (act === 'scan-demo') { const cv = demoImage(); setScanImage(cv); renderScan(); }
     else if (act === 'scan-run') runScan();
     else if (act === 'scan-write') writeScan(b.dataset.mode);
-    else if (act === 'use-cand') {
+    else if (act === 'use-variant') {
+      const row = scan.rows_[Number(tr.dataset.row)];
+      row.name = row.variants[Number(b.dataset.v)].name;
+      row.catAuto = false;
+      row.pctConfirm = false;
+      renderScanResults();
+      drawCanvas();
+    } else if (act === 'use-cand') {
       const row = scan.rows_[Number(tr.dataset.row)];
       const c = row.cands[Number(b.dataset.c)];
       row.name = c.name;
       row.catAuto = false;
+      const vars = variantsFor(c.name);
+      row.variants = vars ? vars.map((v) => ({ name: v.name, pct: S.pctOf(v.name) })) : null;
+      row.pctConfirm = !!vars;
       propagateName(row);
       renderScanResults();
       drawCanvas();

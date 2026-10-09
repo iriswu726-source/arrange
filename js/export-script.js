@@ -13,12 +13,21 @@
       if (!section) { console.log('請先打開道具列表頁，例如 https://www.artalemaplestory.com/zh/equipment'); return; }
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const pattern = /\/images\/([^/]+)\/(?:([^/]+)\/)?([^/?#]+)\.(webp|png|gif|jpe?g)(?:[?#]|$)/i;
-      const itemImgs = () => [...document.querySelectorAll('img')].filter((i) => { const m = (i.currentSrc || i.src).match(pattern); return m && m[1] === section; });
+      // 圖片的分類（/images/<分類>/...）通常和網址一樣；對不上時用頁面上最多的那個
+      const imgSection = (() => {
+        const count = {};
+        for (const i of document.querySelectorAll('img')) { const m = (i.currentSrc || i.src).match(pattern); if (m) count[m[1]] = (count[m[1]] || 0) + 1; }
+        if (count[section]) return section;
+        return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || section;
+      })();
+      const itemImgs = () => [...document.querySelectorAll('img')].filter((i) => { const m = (i.currentSrc || i.src).match(pattern); return m && m[1] === imgSection; });
       const signature = () => itemImgs().map((i) => i.src).join('|');
       const pageButtons = () => [...document.querySelectorAll('button, a')].filter((b) => /^\d+$/.test(b.textContent.trim()));
       const last = Math.max(1, ...pageButtons().map((b) => Number(b.textContent.trim())).filter((n) => n < 500));
 
-      // 道具名稱：圖片附近第一段中文；找不到就用英文名稱
+      // 道具名稱：圖片附近第一段中文；找不到就用英文名稱。
+      // 捲軸的成功率（10%、60%…）如果不在名稱裡，從英文名稱或同一列文字補上。
+      const PCT = /(\d{1,3})\s*[%％]/;
       const nameNear = (img) => {
         let el = img;
         for (let d = 0; d < 6 && el.parentElement; d++) {
@@ -29,8 +38,11 @@
           const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
           let n;
           while ((n = w.nextNode())) {
-            const s = n.nodeValue.replace(/\s+/g, ' ').trim();
-            if (CJK.test(s)) return s;
+            let s = n.nodeValue.replace(/\s+/g, ' ').trim();
+            if (!CJK.test(s)) continue;
+            const pct = (img.getAttribute('alt') || '').match(PCT) || t.match(PCT);
+            if (pct && !PCT.test(s)) s += ' ' + pct[1] + '%';
+            return s;
           }
         }
         return '';
@@ -52,7 +64,7 @@
         pageButtons().find((b) => b.textContent.trim() === String(p) && !b.disabled) ||
         [...document.querySelectorAll('button, a')].find((b) => !b.disabled && /next|下一/i.test((b.getAttribute('aria-label') || '') + ' ' + b.textContent));
 
-      console.log(`開始匯出「${section}」，共 ${last} 頁（會自動點換頁，請不要操作這個網頁）…`);
+      console.log(`開始匯出「${imgSection}」，共 ${last} 頁（會自動點換頁，請不要操作這個網頁）…`);
       collect();
       console.log(`第 1/${last} 頁完成，累計 ${items.size} 個`);
       for (let p = 2; p <= last; p++) {
@@ -88,7 +100,7 @@
       const out = { format: 'artale-catalog', version: 1, source: location.origin + location.pathname, exportedAt: new Date().toISOString(), items: list.filter((x) => x.img) };
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
-      a.download = `artale-catalog-${section}.json`;
+      a.download = `artale-catalog-${imgSection}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();

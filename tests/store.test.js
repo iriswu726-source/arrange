@@ -127,3 +127,12 @@ test('重新掃描（取代）裝備欄時保留素質與備註', () => {
   const back = S.normalizeState(JSON.parse(JSON.stringify({ characters: [{ name: 'x', inventory: { equip: [{ name: '舊裝備' }] } }] })));
   assert.deepEqual(back.characters[0].inventory.equip[0].stats, {});
 });
+
+test('捲軸成功率解析', () => {
+  assert.equal(S.pctOf('頭盔防禦卷軸 60%'), '60%');
+  assert.equal(S.pctOf('頭盔防禦卷軸60％'), '60%');
+  assert.equal(S.pctOf('紅色藥水'), '');
+  assert.equal(S.baseOf('頭盔防禦卷軸 60%'), '頭盔防禦卷軸');
+  assert.equal(S.baseOf('頭盔防禦卷軸(100%)'), '頭盔防禦卷軸');
+  assert.equal(S.baseOf('單手劍攻擊卷軸 10% '), '單手劍攻擊卷軸');
+});
