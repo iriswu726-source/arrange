@@ -871,12 +871,22 @@
   }
 
   function teamCatalogHtml() {
-    if (!cloud.sync) return '';
+    if (!cloud.sync) {
+      // 還沒進入隊伍：告訴使用者怎麼共用圖鑑
+      return `<div class="team-catalog">
+        <b>和其他電腦／隊友共用圖鑑：</b><span class="muted">要先到「共用」登入並進入隊伍</span>
+        <button class="btn small" data-act="goto-cloud">前往共用</button>
+      </div>`;
+    }
     const info = cloud.catInfo;
     const when = info ? new Date(info.version).toLocaleString('zh-TW', { hour12: false }) : '';
+    let action;
+    if (cloud.catBusy) action = '<span class="muted">處理中…</span>';
+    else if (catalog.length) action = `<button class="btn small primary" data-act="cloud-upload-catalog">把我的圖鑑（${catalog.length} 個）上傳給隊伍</button>`;
+    else action = '<span class="muted">這台電腦沒有圖鑑：請在有匯入圖鑑的電腦上傳，這裡會自動下載</span>';
     return `<div class="team-catalog">
       <b>隊伍圖鑑：</b>${info ? `${info.count} 個（${esc(when)}${info.byName ? ' 由 ' + esc(info.byName) : ''} 上傳）` : '<span class="status-new">隊伍還沒有圖鑑</span>'}
-      ${cloud.catBusy ? '<span class="muted">　處理中…</span>' : catalog.length ? `<button class="btn small" data-act="cloud-upload-catalog">把我的圖鑑（${catalog.length} 個）上傳給隊伍</button>` : ''}
+      ${action}
     </div>`;
   }
 
@@ -885,6 +895,7 @@
     cloud.catInfo = info;
     if (info && cloud.teamId && info.version > localCatVersion(cloud.teamId) && !cloud.catBusy) downloadTeamCatalog(cloud.teamId, info);
     if (ui.view === 'icons') renderIcons();
+    else if (ui.view === 'cloud') renderCloud();
   }
 
   async function downloadTeamCatalog(teamId, info) {
@@ -903,6 +914,7 @@
     }
     cloud.catBusy = false;
     if (ui.view === 'icons') renderIcons();
+    else if (ui.view === 'cloud') renderCloud();
   }
 
   async function uploadTeamCatalog() {
@@ -910,7 +922,7 @@
     const replace = cloud.catInfo ? `隊伍目前的圖鑑（${cloud.catInfo.count} 個）會被取代。` : '';
     if (!confirm(`把這台電腦的道具圖鑑（${catalog.length} 個）上傳給隊伍？${replace}隊友和你的其他電腦打開工具時會自動下載。`)) return;
     cloud.catBusy = true;
-    renderIcons();
+    if (ui.view === 'cloud') renderCloud(); else renderIcons();
     toast('上傳圖鑑中…');
     try {
       const items = catalog.map((it) => ({ id: it.id, name: it.name, nameEn: it.nameEn, section: it.section, category: it.category, img: it.img }));
@@ -922,7 +934,7 @@
       toast('上傳失敗：' + cloudError(err));
     }
     cloud.catBusy = false;
-    renderIcons();
+    if (ui.view === 'cloud') renderCloud(); else renderIcons();
   }
 
   function loadCatalog() {
@@ -1247,6 +1259,8 @@
           <div class="row"><input id="inviteLink" readonly value="${esc(inviteLink())}" style="flex:1;min-width:200px">
             <button class="btn primary" data-act="cloud-copy">複製連結</button></div>
           <p class="muted small">把連結傳給朋友，朋友用 Google 登入後就能加入。<b>拿到連結的人都能加入</b>，請只傳給信任的人；隊長可以把成員移出。</p>
+          <h3 style="margin:14px 0 6px">道具圖鑑</h3>
+          ${teamCatalogHtml()}
           <h3 style="margin:14px 0 6px">成員（${t ? t.members.length : 0}）</h3>
           <ul class="member-list">${members}</ul>
           <div class="row" style="margin-top:14px">
@@ -1474,6 +1488,8 @@
       propagateName(row);
       renderScanResults();
       drawCanvas();
+    } else if (act === 'goto-cloud') {
+      setView('cloud');
     } else if (act === 'reset-digits') {
       if (confirm('清除所有學過的數字模板？')) { state.digits = []; save(); renderIcons(); }
     } else if (act === 'del-icon') {
