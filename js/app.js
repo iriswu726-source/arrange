@@ -11,6 +11,7 @@
   const CAT = window.ArrCatalog;
   const CAT_AUTO = 0.2; // 圖鑑比對：距離低於此值、且明顯勝過第二名就自動填名稱（以 1733 個真實圖示測試調整）
   const CAT_MARGIN = 0.025;
+  const SAME_LOOK = 0.01; // 和最佳結果差距在此之內 = 圖示長得一樣（例如同顏色的各種捲軸）
   let catalog = []; // 道具圖鑑（存在本機 IndexedDB）
   const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 
@@ -107,29 +108,13 @@
 
   /* 圖鑑中同名道具的原始圖片（優先同分頁）。 */
   let catalogByName = new Map();
-  let catalogVariants = new Map(); // 捲軸：基本名稱 → 各成功率的圖鑑道具
   function indexCatalog() {
     catalogByName = new Map();
-    catalogVariants = new Map();
     for (const it of catalog) {
       const list = catalogByName.get(it.name) || [];
       list.push(it);
       catalogByName.set(it.name, list);
-      if (S.pctOf(it.name)) {
-        const base = S.baseOf(it.name);
-        const vs = catalogVariants.get(base) || [];
-        if (!vs.some((v) => v.name === it.name)) vs.push(it);
-        catalogVariants.set(base, vs);
-      }
     }
-    for (const [base, vs] of catalogVariants) {
-      if (vs.length < 2) catalogVariants.delete(base);
-      else vs.sort((a, b) => parseInt(S.pctOf(a.name), 10) - parseInt(S.pctOf(b.name), 10));
-    }
-  }
-  /* 這個名稱有多種成功率時，回傳全部成功率版本；否則 null。 */
-  function variantsFor(name) {
-    return name ? catalogVariants.get(S.baseOf(name)) || null : null;
   }
   function catalogImg(name, tab) {
     const list = catalogByName.get(name);
@@ -664,27 +649,25 @@
         include: true,
         remember: true,
       };
-      // 圖示庫沒學過的，拿去跟道具圖鑑比
-      const shape = !r.icon && catalog.length ? SC.cellShape(scan.imgData, r.cell, scan.digitThreshold) : null;
-      if (shape) {
-        const ranked = SC.rankCatalog(shape, catalog, scan.tab, 5);
-        row.cands = ranked.map((c) => ({ name: c.item.name, img: c.item.img, dist: c.dist }));
-        const [best, second] = ranked;
-        if (best && best.dist <= CAT_AUTO && (!second || second.dist - best.dist >= CAT_MARGIN)) {
+      // 跟道具圖鑑比（圖示庫沒學過的格子用來猜名稱；學過的也檢查是否有「長得一樣」的其他道具）
+      const shape = catalog.length ? SC.cellShape(scan.imgData, r.cell, scan.digitThreshold) : null;
+      const ranked = shape ? SC.rankCatalog(shape, catalog, scan.tab, 400) : [];
+      const [best, second] = ranked;
+      if (!r.icon && best) {
+        row.cands = ranked.slice(0, 5).map((c) => ({ name: c.item.name, img: c.item.img, dist: c.dist }));
+        if (best.dist <= CAT_AUTO && (!second || second.dist - best.dist >= CAT_MARGIN)) {
           row.name = best.item.name;
           row.catAuto = true;
           row.dist = best.dist;
         }
       }
-      // 捲軸：同一種有多個成功率（圖示通常一樣），要讓使用者選成功率
-      const vars = variantsFor(row.name || (row.cands[0] && row.cands[0].name));
-      if (vars) {
-        row.variants = vars.map((v) => ({ name: v.name, pct: S.pctOf(v.name) }));
-        row.pctConfirm = true;
-        if (row.catAuto && shape) {
-          // 只有各成功率的圖片明顯不同時才自動選，否則留空等使用者點
-          const ds = vars.map((v) => SC.shapeDistance(shape, v.shape)).sort((a, b) => a - b);
-          if (ds.length > 1 && ds[1] - ds[0] < CAT_MARGIN) { row.name = ''; row.catAuto = false; }
+      // 圖示一樣、名稱不同的道具（捲軸：顏色只代表成功率等級，種類常常看不出來）→ 讓使用者挑
+      if (best && best.dist <= CAT_AUTO) {
+        const near = [...new Set(ranked.filter((c) => c.dist <= best.dist + SAME_LOOK).map((c) => c.item.name))];
+        if (near.length > 1) {
+          row.near = near.sort((a, b) => S.baseOf(a).localeCompare(S.baseOf(b), 'zh-Hant') || parseInt(S.pctOf(a) || 0, 10) - parseInt(S.pctOf(b) || 0, 10));
+          if (row.catAuto) { row.name = ''; row.catAuto = false; }
+          row.pctConfirm = !!row.name; // 圖示庫學過的：預填上次的，但要確認
         }
       }
       return row;
@@ -771,7 +754,7 @@
           <tr data-row="${i}">
             <td><input type="checkbox" data-rfield="include" ${r.include ? 'checked' : ''}></td>
             <td class="thumb"><img class="thumb-img" src="${r.thumb}" alt=""></td>
-            <td><input class="inline" data-rfield="name" list="nameList" value="${esc(r.name)}" placeholder="${esc(r.guess ? '可能是：' + r.guess : '輸入道具名稱')}"></td>
+            <td><input class="inline" data-rfield="name" list="${r.near ? 'near-' + i : 'nameList'}" value="${esc(r.name)}" placeholder="${esc(r.near ? '打關鍵字挑選（例如：頭盔）' : r.guess ? '可能是：' + r.guess : '輸入道具名稱')}">${r.near ? `<datalist id="near-${i}">${r.near.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>` : ''}</td>
             <td><input class="inline qty" data-rfield="qty" type="number" min="1" value="${r.qty}">${QTY_SRC[r.qtySrc] ? `<div class="small muted">${QTY_SRC[r.qtySrc]}</div>` : ''}</td>
             <td class="small">${statusHtml(r)}</td>
             <td><input type="checkbox" data-rfield="remember" ${r.remember ? 'checked' : ''}></td>
@@ -780,11 +763,26 @@
       </table></div>`;
   }
 
-  function statusHtml(r) {
-    const pcts = r.variants && r.variants.length
-      ? `<div class="pcts">${r.name && r.pctConfirm ? '<span class="status-guess">請確認成功率</span>' : r.name ? '' : `<span class="status-new">${esc(S.baseOf(r.variants[0].name))}：請選成功率</span>`}
-          ${r.variants.map((v, i) => `<button class="pct ${v.name === r.name ? 'on' : ''}" data-act="use-variant" data-v="${i}" title="${esc(v.name)}">${esc(v.pct)}</button>`).join('')}</div>`
+  /* 同外觀道具（捲軸）的提示與成功率按鈕 */
+  function nearHtml(r) {
+    if (!r.near) return '';
+    const bases = [...new Set(r.near.map(S.baseOf))];
+    const base = r.name ? S.baseOf(r.name) : bases.length === 1 ? bases[0] : '';
+    const opts = base ? r.near.filter((n) => S.baseOf(n) === base) : [];
+    const pcts = [...new Set(r.near.map(S.pctOf).filter(Boolean))].sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    let msg;
+    if (r.name && r.pctConfirm) msg = '<span class="status-guess">外觀相同的道具不只一種，請確認名稱／成功率</span>';
+    else if (!r.name && bases.length > 1) msg = `<span class="status-new">外觀相同的有 ${bases.length} 種（${pcts.join('／') || '成功率不明'}），在名稱欄打關鍵字挑選</span>`;
+    else if (!r.name) msg = `<span class="status-new">${esc(base)}：請選成功率</span>`;
+    else msg = '';
+    const buttons = opts.length > 1 || (opts.length === 1 && opts[0] !== r.name)
+      ? opts.map((n) => `<button class="pct ${n === r.name ? 'on' : ''}" data-act="use-variant" data-name="${esc(n)}" title="${esc(n)}">${esc(S.pctOf(n) || n)}</button>`).join('')
       : '';
+    return msg || buttons ? `<div class="pcts">${msg}${buttons}</div>` : '';
+  }
+
+  function statusHtml(r) {
+    const pcts = nearHtml(r);
     if (r.iconId && r.name) return `<span class="status-ok">✓ 已辨識 ${Math.round((1 - r.dist) * 100)}%</span>` + pcts;
     let html = '';
     if (r.catAuto && r.name) html = `<span class="status-guess">圖鑑比對 ${Math.round((1 - r.dist) * 100)}%</span>`;
@@ -802,9 +800,9 @@
   /* 填入名稱後，自動帶給其他相同圖示且尚未命名的格子。 */
   function propagateName(src) {
     let n = 0;
-    if (src.variants) return 0; // 捲軸成功率每張分別選，不自動帶入
+    if (src.near) return 0; // 外觀相同的道具（捲軸）每格分別選，不自動帶入
     for (const r of scan.rows_) {
-      if (r === src || r.name.trim() || r.variants) continue;
+      if (r === src || r.name.trim() || r.near) continue;
       if (SC.featureDistance(r.feat, src.feat) <= scan.maxDist) { r.name = src.name; n++; }
     }
     return n;
@@ -1371,7 +1369,7 @@
     else if (act === 'scan-write') writeScan(b.dataset.mode);
     else if (act === 'use-variant') {
       const row = scan.rows_[Number(tr.dataset.row)];
-      row.name = row.variants[Number(b.dataset.v)].name;
+      row.name = b.dataset.name;
       row.catAuto = false;
       row.pctConfirm = false;
       renderScanResults();
@@ -1381,9 +1379,7 @@
       const c = row.cands[Number(b.dataset.c)];
       row.name = c.name;
       row.catAuto = false;
-      const vars = variantsFor(c.name);
-      row.variants = vars ? vars.map((v) => ({ name: v.name, pct: S.pctOf(v.name) })) : null;
-      row.pctConfirm = !!vars;
+      row.pctConfirm = false;
       propagateName(row);
       renderScanResults();
       drawCanvas();
@@ -1486,7 +1482,9 @@
       else if (t.dataset.rfield === 'name') {
         row.name = t.value.trim();
         row.catAuto = false;
+        row.pctConfirm = false;
         if (row.iconId && S.iconById(state, row.iconId) && S.iconById(state, row.iconId).name !== row.name) row.iconId = '';
+        if (row.near) { renderScanResults(); drawCanvas(); return; }
         if (row.name && propagateName(row)) renderScanResults();
         drawCanvas();
       }
