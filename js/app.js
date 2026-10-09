@@ -947,6 +947,19 @@
     }).catch(() => { /* 不支援 IndexedDB 就不用圖鑑 */ });
   }
 
+  /* 整份圖鑑存成一個檔案（格式和網站匯出程式相同），可以傳給其他玩家匯入。 */
+  function exportCatalog() {
+    const items = catalog.map((it) => ({ id: it.id, name: it.name, nameEn: it.nameEn, section: it.section, category: it.category, img: it.img }));
+    const out = { format: 'artale-catalog', version: 1, source: 'artale-arrange', exportedAt: new Date().toISOString(), items };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+    a.download = `artale-catalog-all-${items.length}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    toast(`已匯出 ${items.length} 個道具的圖鑑檔`);
+  }
+
   async function importCatalog(file, parsed) {
     if (!file && !parsed) return;
     if (!CAT) { toast('這個瀏覽器無法使用道具圖鑑'); return; }
@@ -977,6 +990,7 @@
       <div class="row spread"><b>道具圖鑑：${catalog.length} 個</b>
         <span class="row"><button class="btn small" data-act="copy-exporter">複製匯出程式</button>
         <button class="btn small primary" data-act="import-catalog">匯入道具圖鑑</button>
+        ${catalog.length ? '<button class="btn small" data-act="export-catalog" title="整份圖鑑存成一個檔案，可以傳給其他玩家匯入">匯出圖鑑檔</button>' : ''}
         ${catalog.length ? '<button class="btn small danger" data-act="clear-catalog">清除</button>' : ''}</span></div>
       ${catalog.length ? `<p class="muted">${Object.entries(bySec).map(([k, n]) => `${esc(k)} ${n}`).join('、')}</p>` : ''}
       <p class="muted" style="margin-bottom:0">掃圖時，圖示庫沒學過的格子會跟圖鑑比對：很像的自動填名稱，不確定的列出候選圖讓你點。
@@ -1480,6 +1494,7 @@
       try { await navigator.clipboard.writeText(window.ArrExportScript); toast('匯出程式已複製，到網站的 F12 Console 貼上執行'); }
       catch (e) { prompt('複製下面這段程式：', window.ArrExportScript); }
     } else if (act === 'import-catalog') $('#catalogFile').click();
+    else if (act === 'export-catalog') exportCatalog();
     else if (act === 'clear-catalog') {
       if (confirm(`清除道具圖鑑（${catalog.length} 個）？之後可以再匯入。`)) { await CAT.clear(); catalog = []; indexCatalog(); renderNames(); renderIcons(); }
     } else if (act === 'use-guess') {
