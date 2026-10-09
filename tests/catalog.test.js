@@ -23,3 +23,17 @@ test('消耗品頁面對應到消耗分頁', () => {
   assert.equal(CAT.SECTION_TAB.equipment, 'equip');
   assert.equal(CAT.CATEGORY_TAB.scrolls, 'use');
 });
+
+test('楓幣袋：本身已有時 x2～x5 不重複', () => {
+  const out = CAT.collapseMultiples([{ id: '1', name: '銅色楓幣袋' }, { id: '2', name: '銅色楓幣袋x2' }, { id: '3', name: '銅色楓幣袋x5' }, { id: '4', name: '金色楓幣袋x2' }]);
+  assert.deepEqual(out.map((x) => x.id + ':' + x.name), ['1:銅色楓幣袋', '4:金色楓幣袋']);
+});
+
+test('技能書／母書判斷', () => {
+  assert.equal(CAT.bookKind('[技能書]楓葉祝福20'), 'skill');
+  assert.equal(CAT.bookKind('[母書]屬性強化'), 'mastery');
+  assert.equal(CAT.bookKind('【母書】三飛閃'), 'mastery');
+  assert.equal(CAT.bookKind('技能書 進階鬥氣30'), 'skill');
+  assert.equal(CAT.bookKind('紅色藥水'), '');
+  assert.equal(CAT.bookKind('冒險家的技能書'), '', '不是開頭的不算');
+});

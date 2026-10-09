@@ -52,6 +52,12 @@
     });
   }
 
+  /* 名稱開頭是 [技能書] → 'skill'、[母書] → 'mastery'。 */
+  function bookKind(name) {
+    const m = String(name || '').match(/^\s*[\[【［]?\s*(技能書|母書)/);
+    return m ? (m[1] === '技能書' ? 'skill' : 'mastery') : '';
+  }
+
   /* 同一道具的數量版本（例如「錢袋 x1」「錢袋 x2」…）只留第一個，名稱去掉 xN。 */
   const MULTI = /\s*[（(]?\s*[xX×＊*]\s*\d+\s*[)）]?\s*$/;
   function collapseMultiples(items) {
@@ -66,6 +72,7 @@
         seen.add(name);
         out.push(Object.assign({}, it, { name, nameEn: String(it.nameEn || '').replace(MULTI, '').trim() }));
       } else {
+        seen.add(name); // 「銅色楓幣袋」本身已存在時，x2～x5 不再重複加入
         out.push(it); // 同名但圖不同的道具（例如好幾種楓葉披風）照樣保留
       }
     }
@@ -100,6 +107,9 @@
       // 15%、65% 捲軸：網站沿用 10%、60% 的圖，換成遊戲裡有楓葉的圖示
       const pct = /卷軸|scroll/i.test(it.name + ' ' + it.nameEn + ' ' + it.section) && (String(it.name).match(/(\d{1,3})\s*[%％]/) || [])[1];
       if (pct && root.ArrScrollIcons && root.ArrScrollIcons[pct]) it.img = root.ArrScrollIcons[pct];
+      // 技能書、母書：遊戲裡同類都長一樣，換成遊戲裡的書本圖示
+      const book = bookKind(it.name);
+      if (book && root.ArrBookIcons && root.ArrBookIcons[book]) it.img = root.ArrBookIcons[book];
       try {
         const shape = SC.iconImageShape(await decode(it.img));
         if (!shape) { skipped++; continue; }
@@ -125,7 +135,7 @@
     db.close();
   }
 
-  const api = { load, importData, clear, collapseMultiples, SECTION_TAB, CATEGORY_TAB };
+  const api = { load, importData, clear, collapseMultiples, bookKind, SECTION_TAB, CATEGORY_TAB };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ArrCatalog = api;
 })(typeof self !== 'undefined' ? self : this);
