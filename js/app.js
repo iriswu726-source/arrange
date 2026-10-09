@@ -8,6 +8,10 @@
   const Y = window.ArrSync;
   const C = window.ArrCloud;
   const CLOUD_KEY = 'artale-arrange-cloud';
+  const CAT = window.ArrCatalog;
+  const CAT_AUTO = 0.1; // 圖鑑比對：距離低於此值、且明顯勝過第二名就自動填名稱
+  const CAT_MARGIN = 0.05;
+  let catalog = []; // 道具圖鑑（存在本機 IndexedDB）
   const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 
   let state = S.loadState(safeStorage());
@@ -142,7 +146,9 @@
   }
 
   function renderNames() {
-    $('#nameList').innerHTML = S.knownNames(state).map((n) => `<option value="${esc(n)}">`).join('');
+    const names = new Set(S.knownNames(state));
+    for (const it of catalog) names.add(it.name);
+    $('#nameList').innerHTML = Array.from(names).map((n) => `<option value="${esc(n)}">`).join('');
   }
 
   function renderSidebar() {
@@ -581,24 +587,42 @@
     const results = SC.analyze(scan.imgData, scan.rect, scan.cols, scan.rows, {
       icons: state.icons, tab: scan.tab, emptyThreshold: scan.emptyThreshold, maxDist: scan.maxDist,
     });
-    scan.rows_ = results.map((r) => ({
-      cell: r.cell,
-      feat: r.feat,
-      thumb: cellThumb(r.cell),
-      iconId: r.icon ? r.icon.id : '',
-      name: r.icon ? r.icon.name : '',
-      guess: !r.icon && r.nearest && r.dist <= scan.maxDist * 2 ? r.nearest.name : '',
-      dist: r.dist,
-      qty: 1,
-      qtySrc: '',
-      include: true,
-      remember: true,
-    }));
+    scan.rows_ = results.map((r) => {
+      const row = {
+        cell: r.cell,
+        feat: r.feat,
+        thumb: cellThumb(r.cell),
+        iconId: r.icon ? r.icon.id : '',
+        name: r.icon ? r.icon.name : '',
+        guess: !r.icon && r.nearest && r.dist <= scan.maxDist * 2 ? r.nearest.name : '',
+        dist: r.dist,
+        cands: [],
+        catAuto: false,
+        qty: 1,
+        qtySrc: '',
+        include: true,
+        remember: true,
+      };
+      // 圖示庫沒學過的，拿去跟道具圖鑑比
+      if (!r.icon && catalog.length) {
+        const ranked = SC.rankCatalog(SC.cellShape(scan.imgData, r.cell, scan.digitThreshold), catalog, scan.tab, 5);
+        row.cands = ranked.map((c) => ({ name: c.item.name, img: c.item.img, dist: c.dist }));
+        const [best, second] = ranked;
+        if (best && best.dist <= CAT_AUTO && (!second || second.dist - best.dist >= CAT_MARGIN)) {
+          row.name = best.item.name;
+          row.catAuto = true;
+          row.dist = best.dist;
+        }
+      }
+      return row;
+    });
     save();
     drawCanvas();
     renderScanResults();
     const known = scan.rows_.filter((r) => r.iconId).length;
-    scanMsg(`找到 ${scan.rows_.length} 個道具格，已辨識 ${known} 個，新圖示 ${scan.rows_.length - known} 個`);
+    const fromCat = scan.rows_.filter((r) => r.catAuto).length;
+    const unknown = scan.rows_.length - known - fromCat;
+    scanMsg(`找到 ${scan.rows_.length} 個道具格：已辨識 ${known} 個` + (fromCat ? `、圖鑑比對 ${fromCat} 個（請確認）` : '') + (unknown ? `、待確認 ${unknown} 個` : ''));
     if (scan.tab === 'equip') return; // 裝備沒有數量
 
     // 先用學過的數字模板讀數量；讀不出來的才交給 OCR
@@ -676,11 +700,23 @@
             <td class="thumb"><img class="thumb-img" src="${r.thumb}" alt=""></td>
             <td><input class="inline" data-rfield="name" list="nameList" value="${esc(r.name)}" placeholder="${esc(r.guess ? '可能是：' + r.guess : '輸入道具名稱')}"></td>
             <td><input class="inline qty" data-rfield="qty" type="number" min="1" value="${r.qty}">${QTY_SRC[r.qtySrc] ? `<div class="small muted">${QTY_SRC[r.qtySrc]}</div>` : ''}</td>
-            <td class="small">${r.iconId && r.name ? `<span class="status-ok">✓ 已辨識 ${Math.round((1 - r.dist) * 100)}%</span>` : r.guess ? `<span class="status-guess">相似：${esc(r.guess)} <button class="btn small" data-act="use-guess">套用</button></span>` : '<span class="status-new">新圖示</span>'}</td>
+            <td class="small">${statusHtml(r)}</td>
             <td><input type="checkbox" data-rfield="remember" ${r.remember ? 'checked' : ''}></td>
           </tr>`).join('')}
         </tbody>
       </table></div>`;
+  }
+
+  function statusHtml(r) {
+    if (r.iconId && r.name) return `<span class="status-ok">✓ 已辨識 ${Math.round((1 - r.dist) * 100)}%</span>`;
+    let html = '';
+    if (r.catAuto && r.name) html = `<span class="status-guess">圖鑑比對 ${Math.round((1 - r.dist) * 100)}%</span>`;
+    else if (r.guess) html = `<span class="status-guess">相似：${esc(r.guess)} <button class="btn small" data-act="use-guess">套用</button></span>`;
+    else if (!r.name) html = '<span class="status-new">新圖示</span>';
+    if (r.cands && r.cands.length) {
+      html += `<div class="cands">${r.cands.map((c, i) => `<button class="cand ${c.name === r.name ? 'on' : ''}" data-act="use-cand" data-c="${i}" title="${esc(c.name)}（${Math.round((1 - c.dist) * 100)}%）"><img src="${esc(c.img)}" alt=""></button>`).join('')}</div>`;
+    }
+    return html;
   }
 
   const QTY_SRC = { tmpl: '數字模板', ocr: 'OCR，請確認', unread: '<span class="status-new">未讀到</span>', edited: '手動' };
@@ -732,7 +768,53 @@
     setView('bag');
   }
 
+  /* ================= 道具圖鑑 ================= */
+
+  function loadCatalog() {
+    if (!CAT) return;
+    CAT.load().then((items) => {
+      catalog = items;
+      renderNames();
+      if (ui.view === 'icons') renderIcons();
+    }).catch(() => { /* 不支援 IndexedDB 就不用圖鑑 */ });
+  }
+
+  async function importCatalog(file) {
+    if (!file) return;
+    const bar = $('#catalogProgress');
+    try {
+      const json = JSON.parse(await file.text());
+      if (bar) bar.hidden = false;
+      const res = await CAT.importData(json, (f) => { if (bar) bar.firstElementChild.style.width = Math.round(f * 100) + '%'; });
+      catalog = await CAT.load();
+      renderNames();
+      renderIcons();
+      toast(`圖鑑匯入完成：${res.added} 個道具` + (res.skipped ? `（略過 ${res.skipped} 個）` : ''));
+    } catch (err) {
+      if (bar) bar.hidden = true;
+      toast('匯入失敗：' + (err.message || err));
+    }
+  }
+
   /* ================= 圖示庫 ================= */
+
+  function catalogHtml() {
+    if (!CAT) return '';
+    const bySec = {};
+    for (const it of catalog) bySec[it.section || '其他'] = (bySec[it.section || '其他'] || 0) + 1;
+    return `<div class="panel small">
+      <div class="row spread"><b>道具圖鑑：${catalog.length} 個</b>
+        <span class="row"><button class="btn small" data-act="copy-exporter">複製匯出程式</button>
+        <button class="btn small primary" data-act="import-catalog">匯入道具圖鑑</button>
+        ${catalog.length ? '<button class="btn small danger" data-act="clear-catalog">清除</button>' : ''}</span></div>
+      ${catalog.length ? `<p class="muted">${Object.entries(bySec).map(([k, n]) => `${esc(k)} ${n}`).join('、')}</p>` : ''}
+      <p class="muted" style="margin-bottom:0">掃圖時，圖示庫沒學過的格子會跟圖鑑比對：很像的自動填名稱，不確定的列出候選圖讓你點。
+      取得圖鑑：按「複製匯出程式」→ 打開 <a href="https://www.artalemaplestory.com/zh/equipment" target="_blank" rel="noopener">artalemaplestory.com</a> 的道具列表 → F12 → Console 貼上執行 → 匯入下載的檔案。
+      圖鑑只存在這台電腦的瀏覽器裡。</p>
+      <div class="progress" id="catalogProgress" hidden><div></div></div>
+      <input id="catalogFile" type="file" accept="application/json,.json" hidden>
+    </div>`;
+  }
 
   function digitInfoHtml() {
     const have = Array.from(new Set(state.digits.map((t) => t.d))).sort();
@@ -744,7 +826,7 @@
 
   function renderIcons() {
     if (!state.icons.length) {
-      main.innerHTML = digitInfoHtml() + '<div class="empty">圖示庫是空的。<br>在「掃圖」中替新圖示填名稱並勾選「記住」，就會出現在這裡。</div>';
+      main.innerHTML = catalogHtml() + digitInfoHtml() + '<div class="empty">圖示庫是空的。<br>在「掃圖」中替新圖示填名稱並勾選「記住」，就會出現在這裡。</div>';
       return;
     }
     const sorted = state.icons.slice().sort((a, b) => (a.tab || '').localeCompare(b.tab || '') || a.name.localeCompare(b.name, 'zh-Hant'));
@@ -754,6 +836,7 @@
         <input id="iconFilter" type="search" placeholder="篩選…" style="width:200px">
       </div>
       <p class="muted small">改名後，之後掃圖會用新名稱；刪除後該圖示需重新學習。認錯時可以刪掉錯的圖示重新掃描。</p>
+      ${catalogHtml()}
       ${digitInfoHtml()}
       <div class="icon-grid">${sorted.map((ic) => `
         <div class="icon-card" data-icon="${esc(ic.id)}" data-search="${esc(Q.normalize(ic.name))}">
@@ -787,7 +870,8 @@
   }
 
   function initCloud() {
-    if (!C || !C.configured()) return;
+    // 直接開啟檔案（file://）時無法 Google 登入，維持本機模式，共用頁會說明要用網址開啟
+    if (!C || !C.configured() || location.protocol === 'file:') return;
     C.init(onUser).catch((err) => {
       cloud.status = 'error';
       cloud.error = cloudError(err);
@@ -942,7 +1026,7 @@
     } else if (cloud.status === 'error') { text = '雲端錯誤'; cls = 'err'; }
     chip.textContent = text;
     chip.className = 'cloud-chip ' + cls;
-    chip.hidden = cloud.status === 'off';
+    chip.hidden = cloud.status === 'off' || location.protocol === 'file:';
   }
 
   function renderCloud() {
@@ -1153,7 +1237,7 @@
     }
   });
 
-  main.addEventListener('click', (e) => {
+  main.addEventListener('click', async (e) => {
     const jump = e.target.closest('[data-jump]');
     if (jump) {
       e.preventDefault();
@@ -1190,7 +1274,21 @@
     else if (act === 'scan-demo') { const cv = demoImage(); setScanImage(cv); renderScan(); }
     else if (act === 'scan-run') runScan();
     else if (act === 'scan-write') writeScan(b.dataset.mode);
-    else if (act === 'use-guess') {
+    else if (act === 'use-cand') {
+      const row = scan.rows_[Number(tr.dataset.row)];
+      const c = row.cands[Number(b.dataset.c)];
+      row.name = c.name;
+      row.catAuto = false;
+      propagateName(row);
+      renderScanResults();
+      drawCanvas();
+    } else if (act === 'copy-exporter') {
+      try { await navigator.clipboard.writeText(window.ArrExportScript); toast('匯出程式已複製，到網站的 F12 Console 貼上執行'); }
+      catch (e) { prompt('複製下面這段程式：', window.ArrExportScript); }
+    } else if (act === 'import-catalog') $('#catalogFile').click();
+    else if (act === 'clear-catalog') {
+      if (confirm(`清除道具圖鑑（${catalog.length} 個）？之後可以再匯入。`)) { await CAT.clear(); catalog = []; renderNames(); renderIcons(); }
+    } else if (act === 'use-guess') {
       const row = scan.rows_[Number(tr.dataset.row)];
       row.name = row.guess;
       propagateName(row);
@@ -1282,6 +1380,7 @@
       else if (t.dataset.rfield === 'qty') { row.qty = Math.max(1, Math.floor(Number(t.value)) || 1); if (row.qtySrc && row.qtySrc !== 'none') row.qtySrc = 'edited'; }
       else if (t.dataset.rfield === 'name') {
         row.name = t.value.trim();
+        row.catAuto = false;
         if (row.iconId && S.iconById(state, row.iconId) && S.iconById(state, row.iconId).name !== row.name) row.iconId = '';
         if (row.name && propagateName(row)) renderScanResults();
         drawCanvas();
@@ -1312,6 +1411,7 @@
     else if (t.id === 'scanDigit') scan.digitThreshold = Number(t.value) || 175;
     else if (t.id === 'scanZoom') { scan.zoom = t.value; drawCanvas(); }
     else if (t.id === 'scanFile') { loadImageFile(t.files[0]); t.value = ''; }
+    else if (t.id === 'catalogFile') { importCatalog(t.files[0]); t.value = ''; }
     else if (t.dataset.rect || t.id === 'scanCols' || t.id === 'scanRows' || t.id === 'scanEmpty' || t.id === 'scanDist') save();
   });
 
@@ -1373,4 +1473,5 @@
   if (cloud.pendingJoin) ui.view = 'cloud';
   render();
   initCloud();
+  loadCatalog();
 })();

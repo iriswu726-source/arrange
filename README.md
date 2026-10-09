@@ -31,6 +31,13 @@
 
 > 小技巧：用遊戲內截圖或 Win+Shift+S 擷取背包視窗，**不要縮放**圖片，辨識最準。不想用自己的截圖時，可按「示範圖片」先試玩整個流程。
 
+### 道具圖鑑（從 artalemaplestory.com 匯入名稱與圖片）
+- 「圖示庫」頁按「**複製匯出程式**」→ 打開 <https://www.artalemaplestory.com/zh/equipment> → `F12` → Console
+  （第一次要先打 `allow pasting` 按 Enter）→ 貼上執行。程式會自動翻完所有頁面，下載 `artale-catalog-equipment.json`。
+- 回到工具按「**匯入道具圖鑑**」選那個檔案。其他分類（例如消耗品）的列表頁也可以照做，分別匯入。
+- 掃圖時，圖示庫沒學過的格子會和圖鑑比對：很像的**自動填名稱**，並列出最像的 5 個候選圖，點一下就能換。寫入後會記住，下次直接辨識。
+- 圖鑑只存在這台電腦的瀏覽器（IndexedDB），不會上傳到 GitHub 或 Firebase。圖片與名稱版權屬於原網站與遊戲官方，請僅供個人使用。
+
 ### 圖示庫
 - 查看所有學過的圖示，可改名、指定分頁或刪除（認錯時刪掉重新學）。
 - 顯示已學會的數字模板，可重設。
@@ -108,6 +115,8 @@ npm install && npm run test:rules   # 在 Firestore 模擬器上測試安全規�
 | `js/store.js` | 資料模型：角色、分頁、道具、圖示庫，localStorage 存取 |
 | `js/search.js` | 跨角色搜尋、統計、分散道具分析 |
 | `js/scanner.js` | 掃圖核心：切格、空格判斷、圖示特徵比對、數字遮罩與模板學習 |
+| `js/catalog.js` | 道具圖鑑：匯入網站資料、存在 IndexedDB |
+| `js/export-script.js` | 在圖鑑網站執行的匯出程式（工具內「複製匯出程式」） |
 | `js/sync.js` | 雲端同步：把資料拆成文件、只上傳變動、合併遠端變動 |
 | `js/cloud.js` | Firebase：Google 登入、隊伍建立／加入／退出、即時監看 |
 | `js/firebase-config.js` | Firebase 設定（null = 只用本機模式） |

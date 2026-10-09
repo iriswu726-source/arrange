@@ -344,10 +344,123 @@
     return results;
   }
 
+  /* ---------- 圖鑑比對（和網站圖片比）----------
+   * 網站圖片是透明背景、尺寸不同；截圖裡的圖示有格子底色、可能被縮放、還壓著數量數字。
+   * 所以先把「前景」（圖示本體）切出來，用它的外框重新取樣，跟背景與縮放無關。 */
+  const SG = 10; // 形狀特徵 SG x SG
+
+  /* 由前景遮罩取樣：每格的覆蓋率與前景平均色，加上外框寬高比。 */
+  function shapeFromMask(w, h, isFg, rgbAt) {
+    let x0 = w, y0 = h, x1 = -1, y1 = -1, n = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!isFg(x, y)) continue;
+        n++;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    if (n < 12) return null;
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const cov = new Array(SG * SG).fill(0);
+    const tot = new Array(SG * SG).fill(0);
+    const rgb = new Array(SG * SG * 3).fill(0);
+    for (let y = y0; y <= y1; y++) {
+      const gy = Math.min(SG - 1, Math.floor(((y - y0) * SG) / bh));
+      for (let x = x0; x <= x1; x++) {
+        const g = gy * SG + Math.min(SG - 1, Math.floor(((x - x0) * SG) / bw));
+        tot[g]++;
+        if (!isFg(x, y)) continue;
+        cov[g]++;
+        const c = rgbAt(x, y);
+        rgb[g * 3] += c[0];
+        rgb[g * 3 + 1] += c[1];
+        rgb[g * 3 + 2] += c[2];
+      }
+    }
+    for (let g = 0; g < SG * SG; g++) {
+      if (cov[g]) for (let k = 0; k < 3; k++) rgb[g * 3 + k] = Math.round(rgb[g * 3 + k] / cov[g]);
+      cov[g] = tot[g] ? Math.round((cov[g] / tot[g]) * 100) / 100 : 0;
+    }
+    return { cov, rgb, aspect: Math.round((bw / bh) * 100) / 100 };
+  }
+
+  /* 透明背景的圖示（網站圖片）→ 形狀特徵。 */
+  function iconImageShape(img) {
+    const at = (x, y) => (y * img.width + x) * 4;
+    return shapeFromMask(img.width, img.height,
+      (x, y) => img.data[at(x, y) + 3] >= 128,
+      (x, y) => { const i = at(x, y); return [img.data[i], img.data[i + 1], img.data[i + 2]]; });
+  }
+
+  /* 截圖格子 → 形狀特徵：以格子邊緣的顏色當底色，和底色差很多的就是圖示；數量數字的區域排除。 */
+  function cellShape(img, cell, digitThreshold) {
+    const r = clampRect(img, subRect(cell, 0.06, 0.06, 0.94, 0.94));
+    const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    if (w < 4 || h < 4) return null;
+    const px = (x, y) => { const i = ((r.y0 + y) * img.width + r.x0 + x) * 4; return [img.data[i], img.data[i + 1], img.data[i + 2]]; };
+    // 底色：外圈像素各通道的中位數
+    const ring = [];
+    for (let x = 0; x < w; x++) { ring.push(px(x, 0), px(x, h - 1)); }
+    for (let y = 1; y < h - 1; y++) { ring.push(px(0, y), px(w - 1, y)); }
+    const bg = [0, 1, 2].map((k) => { const v = ring.map((c) => c[k]).sort((a, b) => a - b); return v[v.length >> 1]; });
+    // 數字（含描邊）排除：數字遮罩往外擴 2px
+    const excl = new Uint8Array(w * h);
+    const dm = digitMask(img, cell, digitThreshold, true);
+    const dr = clampRect(img, digitRect(cell));
+    for (let y = 0; y < dm.h; y++) {
+      for (let x = 0; x < dm.w; x++) {
+        if (!dm.mask[y * dm.w + x]) continue;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const cx = dr.x0 + x + dx - r.x0, cy = dr.y0 + y + dy - r.y0;
+            if (cx >= 0 && cy >= 0 && cx < w && cy < h) excl[cy * w + cx] = 1;
+          }
+        }
+      }
+    }
+    const isFg = (x, y) => {
+      if (excl[y * w + x]) return false;
+      const c = px(x, y);
+      return Math.max(Math.abs(c[0] - bg[0]), Math.abs(c[1] - bg[1]), Math.abs(c[2] - bg[2])) > 40;
+    };
+    return shapeFromMask(w, h, isFg, px);
+  }
+
+  /* 0（一樣）～ 約 1（完全不同）。 */
+  function shapeDistance(a, b) {
+    if (!a || !b) return 1;
+    let cov = 0, col = 0, nc = 0;
+    for (let g = 0; g < SG * SG; g++) {
+      cov += Math.abs(a.cov[g] - b.cov[g]);
+      if (a.cov[g] > 0.25 && b.cov[g] > 0.25) {
+        col += (Math.abs(a.rgb[g * 3] - b.rgb[g * 3]) + Math.abs(a.rgb[g * 3 + 1] - b.rgb[g * 3 + 1]) + Math.abs(a.rgb[g * 3 + 2] - b.rgb[g * 3 + 2])) / 765;
+        nc++;
+      }
+    }
+    const asp = Math.min(1, Math.abs(Math.log(a.aspect / b.aspect)));
+    return 0.45 * (cov / (SG * SG)) + 0.45 * (nc ? col / nc : 1) + 0.1 * asp;
+  }
+
+  /* 依相似度排出前 n 名圖鑑道具。 */
+  function rankCatalog(shape, catalog, tab, n) {
+    if (!shape) return [];
+    const out = [];
+    for (const it of catalog || []) {
+      if (tab && it.tab && it.tab !== tab) continue;
+      out.push({ item: it, dist: shapeDistance(shape, it.shape) });
+    }
+    out.sort((a, b) => a.dist - b.dist);
+    return out.slice(0, n || 5);
+  }
+
   const api = {
     GRID, gridCells, iconRect, digitRect, regionStats, isEmptyCell, sampleRegion, cellFeature,
     featureDistance, matchIcon, digitMask, digitImage, segmentGlyphs, glyphFeature, glyphDistance,
     readDigits, learnDigits, mergeDigitTemplates, parseQty, analyze,
+    iconImageShape, cellShape, shapeDistance, rankCatalog,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ArrScanner = api;

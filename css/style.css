@@ -213,6 +213,15 @@ table.stats th:first-child, table.stats td:first-child { text-align: left; }
 .progress { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin: 8px 0; }
 .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
 
+.cands { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.cand {
+  width: 34px; height: 34px; padding: 2px; border-radius: 4px; cursor: pointer;
+  background: #d9dde6; border: 2px solid transparent;
+}
+.cand img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.cand:hover { border-color: var(--accent); }
+.cand.on { border-color: var(--ok); }
+
 /* ---------- icons ---------- */
 .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .icon-card { display: flex; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }

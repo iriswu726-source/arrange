@@ -118,3 +118,51 @@ test('數字模板：學會後能讀出沒看過的組合', () => {
   // 重複樣本不會一直累加
   assert.equal(SC.mergeDigitTemplates(T, SC.learnDigits(img, cells[0], 120)).length, T.length);
 });
+
+/* ---- 圖鑑比對：透明背景、不同大小的圖示要能對上截圖裡的格子 ---- */
+const SHAPES = {
+  ball: (u, v) => (u - 0.5) ** 2 + (v - 0.55) ** 2 < 0.16 ? [220, 40, 40] : null,
+  box: (u, v) => u > 0.1 && u < 0.9 && v > 0.25 && v < 0.75 ? [240, 200, 60] : null,
+  gem: (u, v) => Math.abs(u - 0.5) + Math.abs(v - 0.5) < 0.45 ? [120, 70, 220] : null,
+  leaf: (u, v) => ((u - 0.5) / 0.45) ** 2 + ((v - 0.5) / 0.25) ** 2 < 1 ? [40, 170, 90] : null,
+  blueball: (u, v) => (u - 0.5) ** 2 + (v - 0.55) ** 2 < 0.16 ? [40, 70, 220] : null,
+};
+/* 透明背景的網站圖片，size x size */
+function iconPng(shape, size) {
+  const data = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const c = SHAPES[shape]((x + 0.5) / size, (y + 0.5) / size);
+    if (!c) continue;
+    const i = (y * size + x) * 4;
+    data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; data[i + 3] = 255;
+  }
+  return { data, width: size, height: size };
+}
+/* 畫進截圖格子：灰底、圖示 22px、可加數量 */
+function drawIcon(img, cellIdx, cols, shape) {
+  const cx = (cellIdx % cols) * CELL + 5, cy = Math.floor(cellIdx / cols) * CELL + 3;
+  for (let y = 0; y < 22; y++) for (let x = 0; x < 22; x++) {
+    const c = SHAPES[shape]((x + 0.5) / 22, (y + 0.5) / 22);
+    if (!c) continue;
+    const i = ((cy + y) * img.width + cx + x) * 4;
+    img.data[i] = c[0]; img.data[i + 1] = c[1]; img.data[i + 2] = c[2];
+  }
+}
+
+test('圖鑑比對：不受背景、大小、數量數字影響', () => {
+  const names = Object.keys(SHAPES);
+  const catalog = names.map((n) => ({ name: n, tab: 'use', shape: SC.iconImageShape(iconPng(n, 64)) }));
+  const order = ['gem', 'ball', 'leaf', 'blueball', 'box'];
+  const img = makeImage(order.length, 1, {});
+  order.forEach((n, i) => drawIcon(img, i, order.length, n));
+  drawNumber(img, 1, order.length, '87');
+  drawNumber(img, 2, order.length, '200');
+  const cells = SC.gridCells(rect(order.length, 1), order.length, 1);
+  order.forEach((n, i) => {
+    const ranked = SC.rankCatalog(SC.cellShape(img, cells[i]), catalog, 'use', 3);
+    assert.equal(ranked[0].item.name, n, `格子 ${i} 應該是 ${n}`);
+    assert.ok(ranked[0].dist < ranked[1].dist - 0.03, `${n} 要明顯勝過第二名`);
+  });
+  assert.deepEqual(SC.rankCatalog(SC.cellShape(img, cells[0]), catalog, 'equip'), [], '分頁不同不比');
+  assert.equal(SC.cellShape(makeImage(1, 1, {}), cells[0]), null, '空格沒有前景');
+});
