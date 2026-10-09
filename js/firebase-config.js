@@ -1,14 +1,11 @@
-/* 雲端共用設定。
- * 到 Firebase 主控台「專案設定 → 一般 → 你的應用程式 → SDK 設定和配置」，
- * 把 firebaseConfig 的內容貼在下面（取代 null）。這些值不是密碼，可以公開放在網站上，
- * 資料安全由 firestore.rules 保護。保持 null 就只用本機模式。
- *
- * 範例：
- * window.ARR_FIREBASE_CONFIG = {
- *   apiKey: 'AIza...',
- *   authDomain: 'your-project.firebaseapp.com',
- *   projectId: 'your-project',
- *   appId: '1:123:web:abc',
- * };
- */
-window.ARR_FIREBASE_CONFIG = null;
+/* 雲端共用設定（Firebase 專案：artale-arrange）。
+ * 這些值不是密碼，可以公開放在網站上；資料安全由 firestore.rules 保護。
+ * 改成 null 就只用本機模式。 */
+window.ARR_FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDKGwdmPfukWkK58hwPHGCUDLGFMGGdrs8',
+  authDomain: 'artale-arrange.firebaseapp.com',
+  projectId: 'artale-arrange',
+  storageBucket: 'artale-arrange.firebasestorage.app',
+  messagingSenderId: '428263917627',
+  appId: '1:428263917627:web:b87c4e9c23aeb117f6f41e',
+};
