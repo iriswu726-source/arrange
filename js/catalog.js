@@ -52,6 +52,12 @@
     });
   }
 
+  // 網站沒有中文名稱時，匯出程式可能抓到分類標籤；這種情況改用英文名稱
+  const LABELS = /^(任務道具|掉落物|材料|礦石|寶石|其他|未分類|消耗|裝備|裝飾|特殊|道具)$/;
+  function fixName(it) {
+    return LABELS.test(String(it.name || '').trim()) && it.nameEn ? Object.assign({}, it, { name: String(it.nameEn).trim() }) : it;
+  }
+
   /* 名稱開頭是 [技能書] → 'skill'、[母書] → 'mastery'。 */
   function bookKind(name) {
     const m = String(name || '').match(/^\s*[\[【［]?\s*(技能書|母書)/);
@@ -100,7 +106,7 @@
         extra.push(Object.assign({}, it, { id: it.id + '#' + pct + '%', name, nameEn: String(it.nameEn || '').replace(/\d{1,3}\s*%/, pct + '%'), img: root.ArrScrollIcons[pct], generated: true }));
       }
     }
-    json = Object.assign({}, json, { items: collapseMultiples(json.items.concat(extra)) });
+    json = Object.assign({}, json, { items: collapseMultiples(json.items.concat(extra).map((it) => (it ? fixName(it) : it))) });
     for (let i = 0; i < json.items.length; i++) {
       const it = json.items[i];
       if (!it || !it.id || !it.name || typeof it.img !== 'string' || !it.img.startsWith('data:image/')) { skipped++; continue; }
@@ -135,7 +141,7 @@
     db.close();
   }
 
-  const api = { load, importData, clear, collapseMultiples, bookKind, SECTION_TAB, CATEGORY_TAB };
+  const api = { load, importData, clear, collapseMultiples, bookKind, fixName, SECTION_TAB, CATEGORY_TAB };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ArrCatalog = api;
 })(typeof self !== 'undefined' ? self : this);

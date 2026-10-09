@@ -27,6 +27,7 @@
       // 道具名稱：圖片附近第一段中文；找不到就用英文名稱。
       // 捲軸的成功率（10%、60%…）如果不在名稱裡，從英文名稱或同一列文字補上。
       const PCT = /(\d{1,3})\s*[%％]/;
+      const LABELS = /^(任務道具|掉落物|材料|礦石|寶石|其他|未分類|消耗|裝備|裝飾|特殊|道具)$/;
       const nameNear = (img) => {
         let el = img;
         for (let d = 0; d < 6 && el.parentElement; d++) {
@@ -38,7 +39,7 @@
           let n;
           while ((n = w.nextNode())) {
             let s = n.nodeValue.replace(/\s+/g, ' ').trim();
-            if (!CJK.test(s)) continue;
+            if (!CJK.test(s) || LABELS.test(s)) continue; // 跳過「任務道具」「掉落物」這類分類標籤
             const pct = (img.getAttribute('alt') || '').match(PCT) || t.match(PCT);
             if (pct && !PCT.test(s)) s += ' ' + pct[1] + '%';
             return s;

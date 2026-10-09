@@ -38,3 +38,10 @@ test('技能書／母書判斷', () => {
   assert.equal(CAT.bookKind('紅色藥水'), '');
   assert.equal(CAT.bookKind('冒險家的技能書'), '', '不是開頭的不算');
 });
+
+test('名稱是分類標籤時改用英文名稱', () => {
+  assert.equal(CAT.fixName({ name: '任務道具', nameEn: 'Red Marble' }).name, 'Red Marble');
+  assert.equal(CAT.fixName({ name: '掉落物', nameEn: 'Wooden Hammer' }).name, 'Wooden Hammer');
+  assert.equal(CAT.fixName({ name: '蛇皮', nameEn: 'Snake Skin' }).name, '蛇皮');
+  assert.equal(CAT.fixName({ name: '任務道具', nameEn: '' }).name, '任務道具');
+});
