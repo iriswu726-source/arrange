@@ -7,7 +7,7 @@
   // 網站分類 → 背包分頁；沒對到的不限分頁
   // 網站歸在裝備、但遊戲裡放在消耗欄的分類
   const CATEGORY_TAB = { arrow: 'use', arrows: 'use', 'throwing-star': 'use', 'throwing-stars': 'use', bullet: 'use', bullets: 'use', scroll: 'use', scrolls: 'use' };
-  const SECTION_TAB = { equipment: 'equip', consumables: 'use', consumable: 'use', use: 'use', potions: 'use', scroll: 'use', scrolls: 'use', setup: 'setup', 'set-up': 'setup', chairs: 'setup', etc: 'etc', materials: 'etc', cash: 'special' };
+  const SECTION_TAB = { equipment: 'equip', useable: 'use', usable: 'use', useables: 'use', consumables: 'use', consumable: 'use', use: 'use', potions: 'use', potion: 'use', scroll: 'use', scrolls: 'use', setup: 'setup', 'set-up': 'setup', chairs: 'setup', etc: 'etc', materials: 'etc', cash: 'special' };
 
   function openDb() {
     return new Promise((resolve, reject) => {
@@ -52,6 +52,26 @@
     });
   }
 
+  /* 同一道具的數量版本（例如「錢袋 x1」「錢袋 x2」…）只留第一個，名稱去掉 xN。 */
+  const MULTI = /\s*[（(]?\s*[xX×＊*]\s*\d+\s*[)）]?\s*$/;
+  function collapseMultiples(items) {
+    const seen = new Set();
+    const out = [];
+    for (const it of items) {
+      if (!it || !it.name) { out.push(it); continue; }
+      const name = MULTI.test(it.name) ? String(it.name).replace(MULTI, '').trim() : it.name;
+      if (!name) { out.push(it); continue; }
+      if (name !== it.name) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        out.push(Object.assign({}, it, { name, nameEn: String(it.nameEn || '').replace(MULTI, '').trim() }));
+      } else {
+        out.push(it); // 同名但圖不同的道具（例如好幾種楓葉披風）照樣保留
+      }
+    }
+    return out;
+  }
+
   /* 匯入匯出程式產生的 JSON；回傳 { added, skipped }。 */
   async function importData(json, onProgress) {
     if (!json || json.format !== 'artale-catalog' || !Array.isArray(json.items)) throw new Error('不是道具圖鑑檔案');
@@ -73,7 +93,7 @@
         extra.push(Object.assign({}, it, { id: it.id + '#' + pct + '%', name, nameEn: String(it.nameEn || '').replace(/\d{1,3}\s*%/, pct + '%'), img: root.ArrScrollIcons[pct], generated: true }));
       }
     }
-    json = Object.assign({}, json, { items: json.items.concat(extra) });
+    json = Object.assign({}, json, { items: collapseMultiples(json.items.concat(extra)) });
     for (let i = 0; i < json.items.length; i++) {
       const it = json.items[i];
       if (!it || !it.id || !it.name || typeof it.img !== 'string' || !it.img.startsWith('data:image/')) { skipped++; continue; }
@@ -105,5 +125,7 @@
     db.close();
   }
 
-  root.ArrCatalog = { load, importData, clear, SECTION_TAB, CATEGORY_TAB };
+  const api = { load, importData, clear, collapseMultiples, SECTION_TAB, CATEGORY_TAB };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.ArrCatalog = api;
 })(typeof self !== 'undefined' ? self : this);
