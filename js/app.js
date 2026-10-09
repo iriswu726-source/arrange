@@ -779,11 +779,13 @@
     }).catch(() => { /* 不支援 IndexedDB 就不用圖鑑 */ });
   }
 
-  async function importCatalog(file) {
-    if (!file) return;
+  async function importCatalog(file, parsed) {
+    if (!file && !parsed) return;
+    if (!CAT) { toast('這個瀏覽器無法使用道具圖鑑'); return; }
+    toast('圖鑑匯入中，請稍候…');
     const bar = $('#catalogProgress');
     try {
-      const json = JSON.parse(await file.text());
+      const json = parsed || JSON.parse(await file.text());
       if (bar) bar.hidden = false;
       const res = await CAT.importData(json, (f) => { if (bar) bar.firstElementChild.style.width = Math.round(f * 100) + '%'; });
       catalog = await CAT.load();
@@ -1222,7 +1224,14 @@
     e.target.value = '';
     if (!f) return;
     try {
-      const data = S.normalizeState(JSON.parse(await f.text()));
+      const raw = JSON.parse(await f.text());
+      // 道具圖鑑檔案誤用上方「匯入」時，改走圖鑑匯入（不要當成備份覆蓋資料）
+      if (raw && raw.format === 'artale-catalog') {
+        setView('icons');
+        importCatalog(null, raw);
+        return;
+      }
+      const data = S.normalizeState(raw);
       const where = cloud.sync ? `隊伍「${cloud.team ? cloud.team.name : ''}」的資料（所有成員都會受影響）` : '目前的資料';
       if (!confirm(`匯入 ${data.characters.length} 個角色、${data.icons.length} 個圖示？${where}會被取代（建議先匯出備份）。`)) return;
       if (cloud.sync) data.settings = state.settings;
