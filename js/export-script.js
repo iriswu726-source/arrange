@@ -21,7 +21,6 @@
         return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || section;
       })();
       const itemImgs = () => [...document.querySelectorAll('img')].filter((i) => { const m = (i.currentSrc || i.src).match(pattern); return m && m[1] === imgSection; });
-      const signature = () => itemImgs().map((i) => i.src).join('|');
       const pageButtons = () => [...document.querySelectorAll('button, a')].filter((b) => /^\d+$/.test(b.textContent.trim()));
       const last = Math.max(1, ...pageButtons().map((b) => Number(b.textContent.trim())).filter((n) => n < 500));
 
@@ -49,17 +48,22 @@
       };
 
       const items = new Map();
+      // 同一張圖可能是好幾個道具（例如所有 60% 捲軸都用 60.webp），所以用「圖片＋名稱」區分
       const collect = () => {
         for (const img of itemImgs()) {
           const src = img.src;
           const m = src.match(pattern);
-          if (items.has(src)) continue;
-          items.set(src, {
-            id: m[1] + '/' + (m[2] || '') + '/' + m[3], section: m[1], category: m[2] || '',
-            nameEn: img.getAttribute('alt') || '', name: nameNear(img) || img.getAttribute('alt') || m[3], src,
+          const nameEn = img.getAttribute('alt') || '';
+          const name = nameNear(img) || nameEn || m[3];
+          const key = src + '|' + name;
+          if (items.has(key)) continue;
+          items.set(key, {
+            id: m[1] + '/' + (m[2] || '') + '/' + m[3] + '#' + (nameEn || name), section: m[1], category: m[2] || '',
+            nameEn, name, src,
           });
         }
       };
+      const signature = () => itemImgs().map((i) => i.src + '|' + nameNear(i)).join('\n');
       const findNext = (p) =>
         pageButtons().find((b) => b.textContent.trim() === String(p) && !b.disabled) ||
         [...document.querySelectorAll('button, a')].find((b) => !b.disabled && /next|下一/i.test((b.getAttribute('aria-label') || '') + ' ' + b.textContent));
@@ -81,21 +85,25 @@
       }
 
       const list = [...items.values()];
-      console.log(`收集到 ${list.length} 個道具，下載圖片中…`);
+      // 同一張圖只下載一次
+      const srcs = [...new Set(list.map((x) => x.src))];
+      console.log(`收集到 ${list.length} 個道具（${srcs.length} 張不同圖片），下載圖片中…`);
       const toDataUrl = (blob) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+      const imgOf = new Map();
       let done = 0, failed = 0;
-      const queue = list.slice();
+      const queue = srcs.slice();
       await Promise.all([0, 1, 2, 3].map(async () => {
         while (queue.length) {
-          const it = queue.shift();
+          const src = queue.shift();
           try {
-            it.img = await toDataUrl(await (await fetch(it.src)).blob());
+            imgOf.set(src, await toDataUrl(await (await fetch(src)).blob()));
           } catch (e) {
             failed++;
           }
-          if (++done % 100 === 0) console.log(`圖片 ${done}/${list.length}`);
+          if (++done % 100 === 0) console.log(`圖片 ${done}/${srcs.length}`);
         }
       }));
+      for (const it of list) it.img = imgOf.get(it.src);
 
       const out = { format: 'artale-catalog', version: 1, source: location.origin + location.pathname, exportedAt: new Date().toISOString(), items: list.filter((x) => x.img) };
       const a = document.createElement('a');

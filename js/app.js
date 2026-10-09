@@ -651,7 +651,7 @@
       };
       // 跟道具圖鑑比（圖示庫沒學過的格子用來猜名稱；學過的也檢查是否有「長得一樣」的其他道具）
       const shape = catalog.length ? SC.cellShape(scan.imgData, r.cell, scan.digitThreshold) : null;
-      const ranked = shape ? SC.rankCatalog(shape, catalog, scan.tab, 400) : [];
+      const ranked = shape ? SC.rankCatalog(shape, catalog, scan.tab, catalog.length) : [];
       const [best, second] = ranked;
       if (!r.icon && best) {
         row.cands = ranked.slice(0, 5).map((c) => ({ name: c.item.name, img: c.item.img, dist: c.dist }));
