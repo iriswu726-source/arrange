@@ -58,6 +58,22 @@
     const SC = root.ArrScanner;
     const rows = [];
     let skipped = 0;
+    // 遊戲裡有 15%、65% 捲軸（有白色楓葉），圖鑑網站沒有：照 10%、60% 的捲軸各補一份
+    const extra = [];
+    const names = new Set(json.items.map((it) => it && it.name));
+    if (root.ArrScrollIcons) {
+      for (const it of json.items) {
+        if (!it || !/卷軸|scroll/i.test(it.name + ' ' + (it.nameEn || '') + ' ' + (it.section || ''))) continue;
+        const m = String(it.name).match(/^(.*?)\s*(10|60)\s*[%％]\s*$/);
+        if (!m) continue;
+        const pct = m[2] === '10' ? '15' : '65';
+        const name = m[1] + pct + '%';
+        if (names.has(name)) continue;
+        names.add(name);
+        extra.push(Object.assign({}, it, { id: it.id + '#' + pct + '%', name, nameEn: String(it.nameEn || '').replace(/\d{1,3}\s*%/, pct + '%'), img: root.ArrScrollIcons[pct], generated: true }));
+      }
+    }
+    json = Object.assign({}, json, { items: json.items.concat(extra) });
     for (let i = 0; i < json.items.length; i++) {
       const it = json.items[i];
       if (!it || !it.id || !it.name || typeof it.img !== 'string' || !it.img.startsWith('data:image/')) { skipped++; continue; }
