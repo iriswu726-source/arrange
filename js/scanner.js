@@ -380,11 +380,14 @@
         rgb[g * 3 + 2] += c[2];
       }
     }
+    const mean = [0, 0, 0];
     for (let g = 0; g < SG * SG; g++) {
+      for (let k = 0; k < 3; k++) mean[k] += rgb[g * 3 + k];
       if (cov[g]) for (let k = 0; k < 3; k++) rgb[g * 3 + k] = Math.round(rgb[g * 3 + k] / cov[g]);
       cov[g] = tot[g] ? Math.round((cov[g] / tot[g]) * 100) / 100 : 0;
     }
-    return { cov, rgb, aspect: Math.round((bw / bh) * 100) / 100 };
+    // 整體平均色：形狀相同、只差顏色的道具（例如各成功率的捲軸）靠這個分辨
+    return { cov, rgb, aspect: Math.round((bw / bh) * 100) / 100, mean: mean.map((v) => Math.round(v / n)) };
   }
 
   /* 透明背景的圖示（網站圖片）→ 形狀特徵。 */
@@ -410,9 +413,38 @@
     const excl = new Uint8Array(w * h);
     const dm = digitMask(img, cell, digitThreshold, true);
     const dr = clampRect(img, digitRect(cell));
+    // 只排除「字大小」的區塊：圖示本身亮色、有黑框的大區塊不是數字
+    const keep = new Uint8Array(dm.w * dm.h);
+    const seen = new Uint8Array(dm.w * dm.h);
+    const maxW = cell.w * 0.25, maxH = cell.h * 0.3;
+    for (let p0 = 0; p0 < dm.w * dm.h; p0++) {
+      if (!dm.mask[p0] || seen[p0]) continue;
+      const comp = [p0];
+      seen[p0] = 1;
+      let x0 = dm.w, x1 = -1, y0 = dm.h, y1 = -1;
+      for (let k = 0; k < comp.length; k++) {
+        const q = comp[k], x = q % dm.w, y = (q - x) / dm.w;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+        for (const nq of [x > 0 ? q - 1 : -1, x < dm.w - 1 ? q + 1 : -1, y > 0 ? q - dm.w : -1, y < dm.h - 1 ? q + dm.w : -1]) {
+          if (nq >= 0 && dm.mask[nq] && !seen[nq]) { seen[nq] = 1; comp.push(nq); }
+        }
+      }
+      // 遊戲數量是白字：區塊平均要接近白色（低彩度），圖示上的米黃、淺色亮部不算
+      let satSum = 0;
+      for (const q of comp) {
+        const x = q % dm.w, y = (q - x) / dm.w;
+        const i = ((dr.y0 + y) * img.width + dr.x0 + x) * 4;
+        satSum += Math.max(img.data[i], img.data[i + 1], img.data[i + 2]) - Math.min(img.data[i], img.data[i + 1], img.data[i + 2]);
+      }
+      const whiteish = satSum / comp.length < 45;
+      if (whiteish && x1 - x0 + 1 <= maxW && y1 - y0 + 1 <= maxH) for (const q of comp) keep[q] = 1;
+    }
     for (let y = 0; y < dm.h; y++) {
       for (let x = 0; x < dm.w; x++) {
-        if (!dm.mask[y * dm.w + x]) continue;
+        if (!keep[y * dm.w + x]) continue;
         for (let dy = -2; dy <= 2; dy++) {
           for (let dx = -2; dx <= 2; dx++) {
             const cx = dr.x0 + x + dx - r.x0, cy = dr.y0 + y + dy - r.y0;
@@ -421,11 +453,32 @@
         }
       }
     }
-    const isFg = (x, y) => {
-      if (excl[y * w + x]) return false;
-      const c = px(x, y);
-      return Math.max(Math.abs(c[0] - bg[0]), Math.abs(c[1] - bg[1]), Math.abs(c[2] - bg[2])) > 40;
+    // 從外圈往內淹：和底色接近的像素是背景；被圖示黑框圍住的區域即使顏色接近底色也算圖示
+    // 半透明陰影 = 底色等比例變暗（三個通道的比例一致），也當作背景；黑框太暗不算
+    const shadow = (c) => {
+      const k = [0, 1, 2].map((i) => c[i] / Math.max(1, bg[i]));
+      return k[0] > 0.55 && k[0] < 1 && Math.max(...k) - Math.min(...k) < 0.06;
     };
+    const near = (x, y) => {
+      const c = px(x, y);
+      return Math.max(Math.abs(c[0] - bg[0]), Math.abs(c[1] - bg[1]), Math.abs(c[2] - bg[2])) <= 40 || shadow(c);
+    };
+    const outside = new Uint8Array(w * h);
+    const queue = [];
+    for (let x = 0; x < w; x++) { queue.push(x, (h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { queue.push(y * w, y * w + w - 1); }
+    while (queue.length) {
+      const q = queue.pop();
+      if (outside[q]) continue;
+      const x = q % w, y = (q - x) / w;
+      if (!near(x, y) && !excl[q]) continue;
+      outside[q] = 1;
+      if (x > 0) queue.push(q - 1);
+      if (x < w - 1) queue.push(q + 1);
+      if (y > 0) queue.push(q - w);
+      if (y < h - 1) queue.push(q + w);
+    }
+    const isFg = (x, y) => !excl[y * w + x] && !outside[y * w + x];
     return shapeFromMask(w, h, isFg, px);
   }
 
@@ -441,7 +494,8 @@
       }
     }
     const asp = Math.min(1, Math.abs(Math.log(a.aspect / b.aspect)));
-    return 0.45 * (cov / (SG * SG)) + 0.45 * (nc ? col / nc : 1) + 0.1 * asp;
+    const mean = a.mean && b.mean ? (Math.abs(a.mean[0] - b.mean[0]) + Math.abs(a.mean[1] - b.mean[1]) + Math.abs(a.mean[2] - b.mean[2])) / 765 : 0;
+    return 0.35 * (cov / (SG * SG)) + 0.35 * (nc ? col / nc : 1) + 0.2 * Math.min(1, mean * 3) + 0.1 * asp;
   }
 
   /* 依相似度排出前 n 名圖鑑道具。 */

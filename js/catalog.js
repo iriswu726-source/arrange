@@ -61,6 +61,9 @@
     for (let i = 0; i < json.items.length; i++) {
       const it = json.items[i];
       if (!it || !it.id || !it.name || typeof it.img !== 'string' || !it.img.startsWith('data:image/')) { skipped++; continue; }
+      // 15%、65% 捲軸：網站沿用 10%、60% 的圖，換成遊戲裡有楓葉的圖示
+      const pct = /卷軸|scroll/i.test(it.name + ' ' + it.nameEn + ' ' + it.section) && (String(it.name).match(/(\d{1,3})\s*[%％]/) || [])[1];
+      if (pct && root.ArrScrollIcons && root.ArrScrollIcons[pct]) it.img = root.ArrScrollIcons[pct];
       try {
         const shape = SC.iconImageShape(await decode(it.img));
         if (!shape) { skipped++; continue; }
