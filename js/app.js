@@ -784,6 +784,8 @@
   function statusHtml(r) {
     const pcts = nearHtml(r);
     if (r.iconId && r.name) return `<span class="status-ok">✓ 已辨識 ${Math.round((1 - r.dist) * 100)}%</span>` + pcts;
+    // 外觀相同的道具（捲軸）：候選圖都長一樣，只顯示提示，名稱直接在名稱欄挑
+    if (r.near) return pcts;
     let html = '';
     if (r.catAuto && r.name) html = `<span class="status-guess">圖鑑比對 ${Math.round((1 - r.dist) * 100)}%</span>`;
     else if (r.guess) html = `<span class="status-guess">相似：${esc(r.guess)} <button class="btn small" data-act="use-guess">套用</button></span>`;
