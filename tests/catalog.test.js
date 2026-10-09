@@ -22,6 +22,7 @@ test('消耗品頁面對應到消耗分頁', () => {
   assert.equal(CAT.SECTION_TAB.useable, 'use');
   assert.equal(CAT.SECTION_TAB.equipment, 'equip');
   assert.equal(CAT.CATEGORY_TAB.scrolls, 'use');
+  assert.equal(CAT.SECTION_TAB.misc, 'etc', '其他欄（/images/misc/）');
 });
 
 test('楓幣袋：本身已有時 x2～x5 不重複', () => {

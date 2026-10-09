@@ -7,7 +7,7 @@
   // 網站分類 → 背包分頁；沒對到的不限分頁
   // 網站歸在裝備、但遊戲裡放在消耗欄的分類
   const CATEGORY_TAB = { arrow: 'use', arrows: 'use', 'throwing-star': 'use', 'throwing-stars': 'use', bullet: 'use', bullets: 'use', scroll: 'use', scrolls: 'use' };
-  const SECTION_TAB = { equipment: 'equip', useable: 'use', usable: 'use', useables: 'use', consumables: 'use', consumable: 'use', use: 'use', potions: 'use', potion: 'use', scroll: 'use', scrolls: 'use', setup: 'setup', 'set-up': 'setup', chairs: 'setup', etc: 'etc', materials: 'etc', cash: 'special' };
+  const SECTION_TAB = { equipment: 'equip', useable: 'use', usable: 'use', useables: 'use', consumables: 'use', consumable: 'use', use: 'use', potions: 'use', potion: 'use', scroll: 'use', scrolls: 'use', setup: 'setup', 'set-up': 'setup', chairs: 'setup', etc: 'etc', misc: 'etc', materials: 'etc', material: 'etc', cash: 'special' };
 
   function openDb() {
     return new Promise((resolve, reject) => {
