@@ -187,10 +187,18 @@
 
       // 2) 列表頁（每頁 100 個）與各分類頁
       console.log('讀取列表頁與分類頁…');
+      const listed = new Set();
       for (let p = 1; p <= 60; p++) {
         const html = await get(`/zh/equipment?viewMode=list&pageSize=100&page=${p}`, 2);
-        if (!html || linksIn(html) === 0 && p > 1) break;
+        if (!html) break;
+        const before = new Set(pages.keys());
+        const n = linksIn(html);
+        for (const m of html.matchAll(IMG)) listed.add('equipment/' + m[1] + '/' + m[2]);
+        for (const k of pages.keys()) if (!before.has(k)) listed.add('equipment/' + k);
+        if (n === 0 && p > 1) break;
       }
+      // 沒有給圖鑑清單時：總表上看得到的就算「圖鑑裡有」
+      if (!known.size) for (const id of listed) known.add(id);
       for (const c of [...cats]) {
         for (let p = 1; p <= 20; p++) {
           const html = await get(`/zh/equipment/${c}?viewMode=list&pageSize=100&page=${p}`, 2);
@@ -222,7 +230,8 @@
       };
 
       // 先用藍龍鎧甲試一頁，確認讀得到等級
-      const testPg = pages.get('overall/blue-dragon-armor') || { cat: 'overall', slug: 'blue-dragon-armor' };
+      add('overall', 'blue-dragon-armor');
+      const testPg = pages.get('overall/blue-dragon-armor');
       const testHtml = await get(`/zh/equipment/${testPg.cat}/${testPg.slug}`);
       if (testHtml) {
         const r = parse(testHtml, testPg);
