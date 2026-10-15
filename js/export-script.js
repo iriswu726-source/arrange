@@ -223,7 +223,7 @@
         }
         const og = ((doc.querySelector('meta[property="og:title"]') || {}).content || doc.title || '').split(/\s[|｜–-]\s/)[0].trim();
         const h1 = [...doc.querySelectorAll('h1, h2')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()).find((t) => CJK.test(t) && t.length <= 30 && !/ARTALE|楓之谷|圖鑑/i.test(t));
-        const name = h1 || og || pg.slug;
+        const name = (h1 || og || pg.slug).replace(/\s*[（(]\s*LV\.?\s*\d+\s*[)）]\s*$/i, '');
         const img = [...doc.querySelectorAll('img')].map((i) => i.getAttribute('src') || '').find((s) => s.includes(`/images/equipment/${pg.cat}/${pg.slug}.`));
         const alt = img && (doc.querySelector(`img[src="${img}"]`) || {}).alt;
         return { level, how, name, nameEn: alt || pg.slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()), img: img ? new URL(img, ORIGIN).href : `${ORIGIN}/images/equipment/${pg.cat}/${pg.slug}.webp`, text };

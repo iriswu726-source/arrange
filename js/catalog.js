@@ -54,8 +54,14 @@
 
   // 網站沒有中文名稱時，匯出程式可能抓到分類標籤；這種情況改用英文名稱
   const LABELS = /^(任務道具|掉落物|材料|礦石|寶石|其他|未分類|消耗|裝備|裝飾|特殊|道具)$/;
+  // 裝備頁標題後面的「(LV. 100)」不是名稱的一部分
+  const LV_SUFFIX = /\s*[（(]\s*LV\.?\s*\d+\s*[)）]\s*$/i;
   function fixName(it) {
-    return LABELS.test(String(it.name || '').trim()) && it.nameEn ? Object.assign({}, it, { name: String(it.nameEn).trim() }) : it;
+    if (LABELS.test(String(it.name || '').trim()) && it.nameEn) return Object.assign({}, it, { name: String(it.nameEn).trim() });
+    if (LV_SUFFIX.test(it.name || '') || LV_SUFFIX.test(it.nameEn || '')) {
+      return Object.assign({}, it, { name: String(it.name || '').replace(LV_SUFFIX, ''), nameEn: String(it.nameEn || '').replace(LV_SUFFIX, '') });
+    }
+    return it;
   }
 
   /* 名稱開頭是 [技能書] → 'skill'、[母書] → 'mastery'。 */

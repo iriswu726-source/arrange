@@ -45,3 +45,10 @@ test('名稱是分類標籤時改用英文名稱', () => {
   assert.equal(CAT.fixName({ name: '蛇皮', nameEn: 'Snake Skin' }).name, '蛇皮');
   assert.equal(CAT.fixName({ name: '任務道具', nameEn: '' }).name, '任務道具');
 });
+
+test('裝備名稱後面的 (LV. 100) 會拿掉', () => {
+  const C = require('../js/catalog.js');
+  assert.equal(C.fixName({ name: '藍色龍盔甲 (LV. 110)', nameEn: 'Blue Dragon Armor' }).name, '藍色龍盔甲');
+  assert.equal(C.fixName({ name: '致命劍盾 (LV. 120)', nameEn: 'Dragon Khanjar (Lv. 120)' }).nameEn, 'Dragon Khanjar');
+  assert.equal(C.fixName({ name: '火之眼戒指（第2階段） (LV. 10)' }).name, '火之眼戒指（第2階段）');
+});
