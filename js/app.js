@@ -989,6 +989,7 @@
     return `<div class="panel small">
       <div class="row spread"><b>道具圖鑑：${catalog.length} 個</b>
         <span class="row"><button class="btn small" data-act="copy-exporter">複製匯出程式</button>
+        <button class="btn small" data-act="copy-equipscan" title="裝備總表沒列出的裝備也找出來，並列出 100 等以上的裝備">複製補漏＋等級程式</button>
         <button class="btn small primary" data-act="import-catalog">匯入道具圖鑑</button>
         ${catalog.length ? '<button class="btn small" data-act="export-catalog" title="整份圖鑑存成一個檔案，可以傳給其他玩家匯入">匯出圖鑑檔</button>' : ''}
         ${catalog.length ? '<button class="btn small danger" data-act="clear-catalog">清除</button>' : ''}</span></div>
@@ -1495,6 +1496,11 @@
     } else if (act === 'copy-exporter') {
       try { await navigator.clipboard.writeText(window.ArrExportScript); toast('匯出程式已複製，到網站的 F12 Console 貼上執行'); }
       catch (e) { prompt('複製下面這段程式：', window.ArrExportScript); }
+    } else if (act === 'copy-equipscan') {
+      const ids = [...new Set(catalog.filter((it) => it.section === 'equipment').map((it) => String(it.id).split('#')[0]))];
+      const code = window.ArrEquipScanScript(ids, 100);
+      try { await navigator.clipboard.writeText(code); toast('補漏＋等級程式已複製，到網站的 F12 Console 貼上執行'); }
+      catch (e) { prompt('複製下面這段程式：', code); }
     } else if (act === 'import-catalog') $('#catalogFile').click();
     else if (act === 'export-catalog') exportCatalog();
     else if (act === 'clear-catalog') {
