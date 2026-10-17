@@ -579,7 +579,8 @@
     if (!capFits(r, frame)) { cap.msg = '⚠ 框選範圍超出畫面，請按「擷取一張」重新框選。'; renderCapBar(); return; }
     // 欄位置自動對齊格子間隙
     const fit = ArrCapture.fitColumns(canvasData(cropCanvas(frame, r.x, r.y, r.w, r.h)), cols);
-    const crop = { x: r.x + fit.x, y: r.y, w: Math.round(cols * fit.pitch), h: Math.round(r.h), pitch: fit.pitch, cols };
+    // 往下多抓半格多：框得太短也不會漏掉最下面那列；多抓到的外框（不會動）接圖時會自動跳過
+    const crop = { x: r.x + fit.x, y: r.y, w: Math.round(cols * fit.pitch), h: Math.round(Math.min(frame.height - r.y, r.h + fit.pitch * 0.6)), pitch: fit.pitch, cols };
     crop.x = Math.max(0, Math.min(frame.width - crop.w, crop.x));
     cap.crop = crop;
     const cv = document.createElement('canvas');
@@ -593,7 +594,8 @@
       if (!cap.video) return capCancelRun();
       g.drawImage(cap.video, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
       const res = cap.stitcher.add(ArrCapture.lineSigs(g.getImageData(0, 0, crop.w, crop.h)));
-      if (res.lines) cap.strips.push(cropCanvas(cv, 0, crop.h - res.lines, crop.w, res.lines));
+      // 先整張留著，完成時才知道最下面有幾條是不會動的外框
+      if (res.lines) cap.strips.push({ cv: cropCanvas(cv, 0, 0, crop.w, crop.h), lines: res.lines, still: res.still || 0 });
       if (window.__capLog) window.__capLog.push(res.status + ':' + res.lines);
       const prev = cap.msg;
       const rowsNow = Math.floor(res.total / crop.pitch);
@@ -612,16 +614,25 @@
   /* 完成：把接好的部分組成一張長圖，自動找出每一列的位置，直接辨識 */
   function capFinish() {
     capCancelRun();
-    const strips = cap.strips, crop = cap.crop;
+    const frames = cap.strips, crop = cap.crop;
     cap.strips = [];
-    if (!strips.length || !crop) { cap.msg = '還沒有接到畫面（背包要停下來一下才會接）'; renderCapBar(); return; }
-    const H = strips.reduce((s, c) => s + c.height, 0);
+    if (!frames.length || !crop) { cap.msg = '還沒有接到畫面（背包要停下來一下才會接）'; renderCapBar(); return; }
+    // 最下面不會跟著捲的線（框到背包外框）：取各次的中位數，接圖時跳過
+    const stills = frames.slice(1).map((f) => f.still).sort((a, b) => a - b);
+    const still = stills.length ? stills[stills.length >> 1] : 0;
+    const h = crop.h - still;
+    const H = h + frames.slice(1).reduce((s, f) => s + Math.min(f.lines, h), 0);
     const cv = document.createElement('canvas');
     cv.width = crop.w;
     cv.height = H;
     const g = cv.getContext('2d', { willReadFrequently: true });
-    let y = 0;
-    for (const s of strips) { g.drawImage(s, 0, y); y += s.height; }
+    g.drawImage(frames[0].cv, 0, 0, crop.w, h, 0, 0, crop.w, h);
+    let y = h;
+    for (const f of frames.slice(1)) {
+      const n = Math.min(f.lines, h);
+      g.drawImage(f.cv, 0, h - n, crop.w, n, 0, y, crop.w, n);
+      y += n;
+    }
     const fit = ArrCapture.fitRows(canvasData(cv), crop.pitch);
     const y0 = Math.max(0, fit.y);
     let rows = fit.rows;

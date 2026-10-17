@@ -50,7 +50,7 @@
   const SAME = 0.02;
 
   /* 接圖器：每次給一個畫面的線特徵，回傳
-   *   { status: 'first' | 'added' | 'same' | 'moving' | 'gap', lines: 要從畫面底部接上的線數, total }
+   *   { status: 'first' | 'added' | 'same' | 'moving' | 'gap', lines: 新出現的線數, still: 最下面不會動的線數, total }
    * 畫面要和上一次取樣一樣（停下來了）才採用，避免捲動中的畫面。
    * 'gap'：和已接好的部分對不上（捲太快、往上捲，或被提示框擋住），這張不接。
    * 有很多個位移都對得上（例如一大片空格）時，取最小的位移，所以請慢慢捲。 */
@@ -72,9 +72,13 @@
         // 最像的位移；幾個一樣像（重複的空格）時取最小的
         let dy = 1;
         while (ds[dy] > min + 0.002) dy++;
+        // 框的最下面如果框到背包外框（不會跟著捲），那幾條線在新舊畫面同一個位置會一模一樣，接圖時要跳過
+        let still = 0;
+        const cap = Math.floor(lines.length * 0.3);
+        while (still < cap && lineDiff(used[lines.length - 1 - still], lines[lines.length - 1 - still]) < 0.01) still++;
         used = lines;
         total += dy;
-        return { status: 'added', lines: dy, total };
+        return { status: 'added', lines: dy, still, total };
       },
       get total() { return total; },
     };

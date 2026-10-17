@@ -93,3 +93,21 @@ test('視窗移動後找回標題列', () => {
   assert.deepEqual([p.x, p.y], [233, 171]);
   assert.ok(p.diff < 5);
 });
+
+test('框到不會動的外框：算出最下面幾條不動的線', () => {
+  const bag = bagImage(12);
+  const H = 180, STILL = 12;
+  // 最下面 STILL 條線固定是外框顏色
+  const framed = (top) => {
+    const v = view(bag, top, H);
+    for (let y = H - STILL; y < H; y++) for (let x = 0; x < v.width; x++) { const i = (y * v.width + x) * 4; v.data[i] = 90; v.data[i + 1] = 100; v.data[i + 2] = 120; }
+    return K.lineSigs(v);
+  };
+  const st = K.createStitcher();
+  const feed = (top) => { st.add(framed(top)); return st.add(framed(top)); };
+  feed(0);
+  const r = feed(40);
+  assert.equal(r.status, 'added');
+  assert.equal(r.lines, 40);
+  assert.equal(r.still, STILL);
+});
