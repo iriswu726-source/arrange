@@ -443,8 +443,65 @@
 
   /* ================= 擷取遊戲畫面 =================
    * 用瀏覽器的「分享畫面」看遊戲視窗（只看畫面，不碰遊戲）。
-   * 擷取一張：把目前畫面放進掃圖。連續擷取：一邊捲動背包，一邊自動把畫面接成一張長圖。 */
-  const cap = { stream: null, video: null, timer: null, stitcher: null, strips: [], frame: false, msg: '' };
+   * 擷取一張：把目前畫面放進掃圖。連續擷取：一邊捲動背包，一邊自動把畫面接成一張長圖，格子位置自動算。
+   * 第一次框選背包時，記住背包視窗上方標題列的樣子；之後背包被移到別的位置，會自動找回來。 */
+  const cap = { stream: null, video: null, timer: null, stitcher: null, strips: [], frame: false, msg: '', anchor: null, crop: null };
+  const ANCHOR_KEY = 'artale-capture-anchor';
+
+  function canvasData(cv) {
+    return cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cv.width, cv.height);
+  }
+  function cropCanvas(src, x, y, w, h) {
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(w));
+    cv.height = Math.max(1, Math.round(h));
+    cv.getContext('2d', { willReadFrequently: true }).drawImage(src, Math.round(x), Math.round(y), cv.width, cv.height, 0, 0, cv.width, cv.height);
+    return cv;
+  }
+
+  /* 標題列：框選範圍正上方約一格高的區域（視窗標題＋分頁按鈕），不要包到視窗外面的遊戲背景 */
+  function saveAnchor(frame, rect, cols) {
+    const p = rect.w / cols;
+    const h = Math.round(p * 1.05), y = Math.round(rect.y - p * 1.15);
+    if (y < 0 || h < 8) { cap.anchor = null; return; }
+    const cv = cropCanvas(frame, rect.x, y, rect.w, h);
+    cap.anchor = { img: canvasData(cv), x: Math.round(rect.x), y, dx: 0, dy: Math.round(rect.y) - y };
+    try { localStorage.setItem(ANCHOR_KEY, JSON.stringify({ x: cap.anchor.x, y, dy: cap.anchor.dy, png: cv.toDataURL('image/png') })); } catch (e) { /* 空間不足就只記在這次 */ }
+  }
+  function loadAnchor() {
+    if (cap.anchor) return Promise.resolve();
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(ANCHOR_KEY) || 'null'); } catch (e) { /* 沒有 */ }
+    if (!saved || !saved.png) return Promise.resolve();
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = img.width;
+        cv.height = img.height;
+        cv.getContext('2d').drawImage(img, 0, 0);
+        cap.anchor = { img: canvasData(cv), x: saved.x, y: saved.y, dy: saved.dy };
+        resolve();
+      };
+      img.onerror = resolve;
+      img.src = saved.png;
+    });
+  }
+
+  /* 在這個畫面上找背包視窗，把記住的框移到新位置。找不到回傳 false。 */
+  function followWindow(frame) {
+    if (!cap.anchor || !scan.capRect) return true;
+    const found = ArrCapture.locate(canvasData(frame), cap.anchor);
+    if (!(found.diff < 25)) return false;
+    const dx = found.x - cap.anchor.x, dy = found.y - cap.anchor.y;
+    if (dx || dy) {
+      scan.capRect = Object.assign({}, scan.capRect, { x: scan.capRect.x + dx, y: scan.capRect.y + dy });
+      cap.anchor.x = found.x;
+      cap.anchor.y = found.y;
+      save();
+    }
+    return true;
+  }
 
   async function capStart() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { toast('這個瀏覽器不支援擷取畫面，請用電腦版 Chrome 或 Edge'); return; }
@@ -459,6 +516,7 @@
       cap.stream = stream;
       cap.video = video;
       stream.getVideoTracks()[0].addEventListener('ended', capStop);
+      await loadAnchor();
       capGrab();
     } catch (e) {
       if (e && e.name !== 'NotAllowedError') toast('無法擷取畫面：' + (e.message || e));
@@ -478,58 +536,70 @@
     const cv = document.createElement('canvas');
     cv.width = v.videoWidth;
     cv.height = v.videoHeight;
-    cv.getContext('2d').drawImage(v, 0, 0);
+    cv.getContext('2d', { willReadFrequently: true }).drawImage(v, 0, 0);
     return cv;
   }
 
-  /* 擷取一張：放進掃圖，用上次連續擷取的格子範圍（可以再調整） */
+  const capFits = (r, cv) => r && r.x >= 0 && r.y >= 0 && r.x + r.w <= cv.width && r.y + r.h <= cv.height;
+
+  /* 擷取一張：放進掃圖，框出背包（找得到的話跟著視窗移動），可以再調整 */
   function capGrab() {
     if (!cap.video) return;
     const cv = capFrame();
-    if (scan.capRect && scan.capRect.x + scan.capRect.w <= cv.width && scan.capRect.y + scan.capRect.h <= cv.height) {
-      scan.rect = Object.assign({}, scan.capRect);
-      scan.cols = scan.capCols || scan.cols;
-      scan.rows = scan.capRows || scan.rows;
+    let msg = '';
+    if (scan.capRect) {
+      if (!followWindow(cv)) msg = '⚠ 畫面上找不到背包視窗。請打開背包後再按「擷取一張」，或重新框選背包範圍。';
+      if (capFits(scan.capRect, cv)) { scan.rect = Object.assign({}, scan.capRect); scan.cols = scan.capCols || scan.cols; }
     }
     setScanImage(cv);
     cap.frame = true;
-    cap.msg = '';
+    cap.msg = msg;
     renderScan();
   }
 
-  /* 連續擷取：格子範圍用目前畫面上框好的（只框「看得到的那幾列」） */
+  /* 連續擷取：範圍用畫面上框好的（整個看得到的格子區域，包含最下面被切到的那一列） */
   function capRun() {
     if (!cap.video) return;
-    if (cap.frame && scan.rect && scan.rect.w > 4 && scan.rect.h > 4) {
+    let frame = capFrame();
+    if (cap.frame && scan.rect && scan.rect.w > 8 && scan.rect.h > 8) {
+      // 剛擷取的畫面上框好了 → 記住範圍和標題列
       scan.capRect = Object.assign({}, scan.rect);
       scan.capCols = scan.cols;
-      scan.capRows = scan.rows;
+      saveAnchor(scan.image, scan.capRect, scan.capCols);
       save();
+    } else if (!scan.capRect) {
+      toast('請先按「擷取一張」，在畫面上框住背包的格子區域，再開始連續擷取');
+      return;
     }
-    if (!scan.capRect) { toast('請先按「擷取一張」，在畫面上框好背包格子，再開始連續擷取'); return; }
-    const r = scan.capRect, cols = scan.capCols, rows = scan.capRows;
-    const w = Math.round(r.w), h = Math.round(r.h), rh = r.h / rows, H = Math.max(1, Math.round(rh));
+    if (!followWindow(frame)) {
+      cap.msg = '⚠ 畫面上找不到背包視窗。請打開背包後按「擷取一張」，重新框選背包範圍。';
+      renderCapBar();
+      return;
+    }
+    const r = scan.capRect, cols = scan.capCols || scan.cols;
+    if (!capFits(r, frame)) { cap.msg = '⚠ 框選範圍超出畫面，請按「擷取一張」重新框選。'; renderCapBar(); return; }
+    // 欄位置自動對齊格子間隙
+    const fit = ArrCapture.fitColumns(canvasData(cropCanvas(frame, r.x, r.y, r.w, r.h)), cols);
+    const crop = { x: r.x + fit.x, y: r.y, w: Math.round(cols * fit.pitch), h: Math.round(r.h), pitch: fit.pitch, cols };
+    crop.x = Math.max(0, Math.min(frame.width - crop.w, crop.x));
+    cap.crop = crop;
     const cv = document.createElement('canvas');
-    cv.width = w;
-    cv.height = h;
+    cv.width = crop.w;
+    cv.height = crop.h;
     const g = cv.getContext('2d', { willReadFrequently: true });
     cap.stitcher = ArrCapture.createStitcher();
     cap.strips = [];
-    cap.msg = '開始捲動背包（從最上面捲到最下面）…';
+    cap.msg = '從背包最上面開始，慢慢往下捲（每次停一下）…';
     cap.timer = setInterval(() => {
       if (!cap.video) return capCancelRun();
-      g.drawImage(cap.video, r.x, r.y, r.w, r.h, 0, 0, w, h);
-      const res = cap.stitcher.add(ArrCapture.rowSigs(g.getImageData(0, 0, w, h), { x: 0, y: 0, w, h }, cols, rows));
-      for (const i of res.rows) {
-        const strip = document.createElement('canvas');
-        strip.width = w;
-        strip.height = H;
-        strip.getContext('2d').drawImage(cv, 0, Math.round(i * rh), w, H, 0, 0, w, H);
-        cap.strips.push(strip);
-      }
+      g.drawImage(cap.video, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+      const res = cap.stitcher.add(ArrCapture.lineSigs(g.getImageData(0, 0, crop.w, crop.h)));
+      if (res.lines) cap.strips.push(cropCanvas(cv, 0, crop.h - res.lines, crop.w, res.lines));
+      if (window.__capLog) window.__capLog.push(res.status + ':' + res.lines);
       const prev = cap.msg;
-      if (res.status === 'gap') cap.msg = `⚠ 這個畫面接不上（捲太快、往上捲了，或滑鼠提示擋住格子）。請捲回剛才接到的位置再慢慢往下。目前 ${res.total} 列`;
-      else if (res.status === 'first' || res.status === 'added') cap.msg = `已接 ${res.total} 列，繼續往下捲；捲到底按「完成」`;
+      const rowsNow = Math.floor(res.total / crop.pitch);
+      if (res.status === 'gap') cap.msg = `⚠ 這個畫面接不上（捲太快、往上捲了，或道具說明擋住格子）。請捲回剛才的位置再慢慢往下。目前約 ${rowsNow} 列`;
+      else if (res.status === 'first' || res.status === 'added') cap.msg = `已接約 ${rowsNow} 列，繼續往下捲；捲到底按「完成」`;
       if (cap.msg !== prev) { const el = $('#capMsg'); if (el) el.textContent = cap.msg; }
     }, 200);
     renderCapBar();
@@ -540,28 +610,45 @@
     cap.timer = null;
   }
 
-  /* 完成：把接好的列組成一張長圖，直接辨識 */
+  /* 完成：把接好的部分組成一張長圖，自動找出每一列的位置，直接辨識 */
   function capFinish() {
     capCancelRun();
-    const strips = cap.strips;
+    const strips = cap.strips, crop = cap.crop;
     cap.strips = [];
-    if (!strips.length) { cap.msg = '還沒有接到畫面'; renderCapBar(); return; }
-    const w = strips[0].width, H = strips[0].height;
+    if (!strips.length || !crop) { cap.msg = '還沒有接到畫面（背包要停下來一下才會接）'; renderCapBar(); return; }
+    const H = strips.reduce((s, c) => s + c.height, 0);
     const cv = document.createElement('canvas');
-    cv.width = w;
-    cv.height = H * strips.length;
-    const g = cv.getContext('2d');
-    strips.forEach((s, i) => g.drawImage(s, 0, i * H));
-    scan.cols = scan.capCols;
-    scan.rows = strips.length;
-    scan.rect = { x: 0, y: 0, w, h: H * strips.length };
-    setScanImage(cv);
-    scan.rect = { x: 0, y: 0, w, h: H * strips.length };
+    cv.width = crop.w;
+    cv.height = H;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    let y = 0;
+    for (const s of strips) { g.drawImage(s, 0, y); y += s.height; }
+    const fit = ArrCapture.fitRows(canvasData(cv), crop.pitch);
+    const y0 = Math.max(0, fit.y);
+    let rows = fit.rows;
+    // 最後一列下面的間隙常被切掉：差一點點也算一列，底下補上最後一條線的顏色
+    while (rows > 1 && y0 + rows * fit.pitch > H + fit.pitch * 0.2) rows--;
+    const rect = { x: 0, y: y0, w: crop.w, h: rows * fit.pitch };
+    let out = cv;
+    const need = Math.ceil(y0 + rows * fit.pitch);
+    if (need > H) {
+      out = document.createElement('canvas');
+      out.width = crop.w;
+      out.height = need;
+      const og = out.getContext('2d');
+      og.drawImage(cv, 0, 0);
+      og.drawImage(cv, 0, H - 1, crop.w, 1, 0, H, crop.w, need - H);
+    }
+    scan.cols = crop.cols;
+    scan.rows = rows;
+    scan.rect = rect;
+    setScanImage(out);
+    scan.rect = rect;
     cap.frame = false;
-    cap.msg = `共 ${strips.length} 列，辨識中…`;
+    cap.msg = `共 ${rows} 列，辨識中…`;
     renderScan();
     Promise.resolve(runScan()).then(() => {
-      cap.msg = `共 ${strips.length} 列，已辨識完成，請檢查下方結果。換分頁或換角色後，直接再按「連續擷取」。`;
+      cap.msg = `共 ${rows} 列，已辨識完成，請檢查下方結果。換分頁或換角色後，直接再按「連續擷取」。`;
       renderCapBar();
     });
   }
@@ -571,14 +658,17 @@
     if (!bar) return;
     if (!cap.stream) { bar.innerHTML = ''; return; }
     const running = !!cap.timer;
+    const help = scan.capRect
+      ? '換分頁、換角色後，直接按「連續擷取」，再把背包從最上面慢慢捲到底。背包視窗移位置也沒關係，會自動找。'
+      : '第一次使用：按「擷取一張」，在畫面上框住背包「整個格子區域」（包含最下面被切到的那一列，不要框到右邊捲軸），設定欄數 4，再按「連續擷取」。';
     bar.innerHTML = `<div class="panel cap-bar">
       <b>🖥 正在擷取遊戲畫面</b>
       ${running
         ? '<button class="btn primary" data-act="cap-finish">完成</button><button class="btn" data-act="cap-cancel">取消</button>'
-        : `<button class="btn" data-act="cap-grab" title="把目前的遊戲畫面放進來">擷取一張</button>
+        : `<button class="btn" data-act="cap-grab" title="把目前的遊戲畫面放進來，可以重新框選背包">擷取一張</button>
            <button class="btn primary" data-act="cap-run" title="一邊捲動背包，一邊自動接成一張長圖">連續擷取（捲動背包）</button>`}
       <button class="btn danger" data-act="cap-stop">停止分享</button>
-      <div class="muted small" id="capMsg" style="flex-basis:100%">${esc(cap.msg || (running ? '' : '第一次使用：按「擷取一張」，在畫面上框住背包「看得到的格子」，設定欄數與看得到的列數，再按「連續擷取」。之後換分頁、換角色都直接按「連續擷取」。'))}</div>
+      <div class="muted small" id="capMsg" style="flex-basis:100%">${esc(cap.msg || (running ? '' : help))}</div>
     </div>`;
   }
 
