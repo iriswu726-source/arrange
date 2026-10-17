@@ -52,3 +52,9 @@ test('裝備名稱後面的 (LV. 100) 會拿掉', () => {
   assert.equal(C.fixName({ name: '致命劍盾 (LV. 120)', nameEn: 'Dragon Khanjar (Lv. 120)' }).nameEn, 'Dragon Khanjar');
   assert.equal(C.fixName({ name: '火之眼戒指（第2階段） (LV. 10)' }).name, '火之眼戒指（第2階段）');
 });
+
+test('名稱只抓到分類字（藥水）時改用英文名稱', () => {
+  const C = require('../js/catalog.js');
+  assert.equal(C.fixName({ name: '藥水', nameEn: 'Cheesecake' }).name, 'Cheesecake');
+  assert.equal(C.fixName({ name: '紅色藥水', nameEn: 'Red Potion' }).name, '紅色藥水');
+});
