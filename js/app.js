@@ -429,7 +429,6 @@
           <label title="格子內顏色變化低於此值視為空格">空格判定 <input id="scanEmpty" type="range" min="2" max="40" value="${scan.emptyThreshold}"><span id="scanEmptyV">${scan.emptyThreshold}</span></label>
           <label title="越大越寬鬆，可能認錯；越小越嚴格">圖示比對容許 <input id="scanDist" type="range" min="1" max="25" value="${Math.round(scan.maxDist * 100)}"><span id="scanDistV">${Math.round(scan.maxDist * 100)}%</span></label>
           <label><span>讀取數量（OCR）</span><input id="scanOcr" type="checkbox" ${scan.ocr ? 'checked' : ''}></label>
-          <label title="數字亮度門檻，數量讀錯時可調整">數字亮度門檻 <input id="scanDigit" type="number" min="60" max="250" value="${scan.digitThreshold}"></label>
           <p class="help">第一次掃到的圖示需要手動填名稱；勾選「記住」後就會存進圖示庫，之後自動辨識。數量由 OCR 讀取（首次需下載辨識資料，請保持連線），請檢查後再寫入。</p>
           <button class="btn primary" style="width:100%" data-act="scan-run">開始辨識</button>
           <div class="progress" id="scanProgress" hidden><div></div></div>
@@ -639,6 +638,7 @@
       og.drawImage(cv, 0, 0);
       og.drawImage(cv, 0, H - 1, crop.w, 1, 0, H, crop.w, need - H);
     }
+    if (window.__capLog) window.__capImage = out;
     scan.cols = crop.cols;
     scan.rows = rows;
     scan.rect = rect;
@@ -921,12 +921,12 @@
     scanMsg(`找到 ${scan.rows_.length} 個道具格：已辨識 ${known} 個` + (fromCat ? `、圖鑑比對 ${fromCat} 個（請確認）` : '') + (unknown ? `、待確認 ${unknown} 個` : ''));
     if (scan.tab === 'equip') return; // 裝備沒有數量
 
-    // 先用學過的數字模板讀數量；讀不出來的才交給 OCR
+    // 先用數字樣本（內建＋學過的）讀數量；讀不出來的才交給 OCR
     const needOcr = [];
+    const digitT = (window.ArrDigitFont || []).concat(state.digits || []);
     for (const row of scan.rows_) {
-      const m = SC.digitMask(scan.imgData, row.cell, scan.digitThreshold);
-      if (m.ink < 3) { row.qtySrc = 'none'; continue; }
-      const n = SC.readDigits(scan.imgData, row.cell, state.digits, scan.digitThreshold);
+      if (!SC.qtyCount(scan.imgData, row.cell)) { row.qtySrc = 'none'; continue; }
+      const n = SC.readQty(scan.imgData, row.cell, digitT);
       if (n) { row.qty = n; row.qtySrc = 'tmpl'; } else { row.qtySrc = 'unread'; needOcr.push(row); }
     }
     renderScanResults();
@@ -948,7 +948,7 @@
     let done = 0;
     for (const row of needOcr) {
       if (runId !== scan.runId) return;
-      const d = SC.digitImage(scan.imgData, row.cell, 4, scan.digitThreshold);
+      const d = SC.qtyImage(scan.imgData, row.cell, 4);
       const cv = document.createElement('canvas');
       cv.width = d.width;
       cv.height = d.height;
@@ -1078,7 +1078,7 @@
         }
       }
       if (r.qty > 1 && scan.tab !== 'equip') {
-        state.digits = SC.mergeDigitTemplates(state.digits, SC.learnDigits(scan.imgData, r.cell, r.qty, scan.digitThreshold));
+        state.digits = SC.mergeDigitTemplates(state.digits, SC.learnQty(scan.imgData, r.cell, r.qty));
       }
       return { name, qty: r.qty, iconId };
     });
@@ -1242,7 +1242,7 @@
   function digitInfoHtml() {
     const have = Array.from(new Set(state.digits.map((t) => t.d))).sort();
     return `<div class="panel row spread small">
-      <span>數字模板：已學會 ${have.length}/10 個數字${have.length ? `（${have.join(' ')}）` : ''}。掃圖寫入時會從確認過的數量自動學習。</span>
+      <span>數量辨識：內建 ARTALE 的數字樣本；另外從你確認過的數量學了 ${state.digits.length} 個樣本${have.length ? `（${have.join(' ')}）` : ''}。讀錯的數量改正後寫入，下次就會更準。</span>
       ${state.digits.length ? '<button class="btn small danger" data-act="reset-digits">重設數字模板</button>' : ''}
     </div>`;
   }

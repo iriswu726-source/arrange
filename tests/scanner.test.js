@@ -166,3 +166,29 @@ test('圖鑑比對：不受背景、大小、數量數字影響', () => {
   assert.deepEqual(SC.rankCatalog(SC.cellShape(img, cells[0]), catalog, 'equip'), [], '分頁不同不比');
   assert.equal(SC.cellShape(makeImage(1, 1, {}), cells[0]), null, '空格沒有前景');
 });
+
+test('新版數量辨識：學會後能讀出沒看過的組合，背景亮度不同也行', () => {
+  const numbers = ['120', '87', '345', '96', '200', '9'];
+  const img = makeImage(numbers.length, 1, Object.fromEntries(numbers.map((_, i) => [i, RED])));
+  numbers.forEach((n, i) => drawNumber(img, i, numbers.length, n));
+  const cells = SC.gridCells(rect(numbers.length, 1), numbers.length, 1);
+  assert.equal(SC.qtyCount(img, cells[0]), 3);
+  assert.equal(SC.readQty(img, cells[0], []), null, '沒有樣本時讀不出來');
+  let T = [];
+  for (let i = 0; i < 4; i++) T = SC.mergeDigitTemplates(T, SC.learnQty(img, cells[i], Number(numbers[i])));
+  assert.deepEqual(Array.from(new Set(T.map((t) => t.d))).sort().join(''), '0123456789');
+  assert.equal(SC.readQty(img, cells[4], T), 200);
+  assert.equal(SC.readQty(img, cells[5], T), 9);
+  assert.deepEqual(SC.learnQty(img, cells[0], 12), [], '位數不符就不學');
+  // 整張變暗（遊戲被遮罩、截圖較暗）還是讀得出來
+  const dim = { data: img.data.map((v, i) => (i % 4 === 3 ? v : Math.round(v * 0.6))), width: img.width, height: img.height };
+  assert.equal(SC.readQty(dim, cells[4], T), 200);
+  // 舊格式的樣本會被略過，不會出錯
+  assert.equal(SC.readQty(img, cells[4], [{ d: '2', feat: new Array(36).fill(0) }].concat(T)), 200);
+});
+
+test('內建數字樣本涵蓋 0～9', () => {
+  const FONT = require('../js/digit-font.js');
+  assert.deepEqual(Array.from(new Set(FONT.map((t) => t.d))).sort().join(''), '0123456789');
+  assert.ok(FONT.every((t) => t.feat.length === SC.qtyFeature({ lab: new Int32Array(1), w: 1 }, { id: 0, x0: 0, x1: 0, y0: 0, y1: 0 }).length));
+});

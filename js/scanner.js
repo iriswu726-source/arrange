@@ -312,11 +312,220 @@
     const out = (templates || []).slice();
     for (const t of learned) {
       const same = out.filter((x) => x.d === t.d);
-      if (same.some((x) => glyphDistance(x.feat, t.feat) < 0.03)) continue;
+      const dist = t.feat.length === QLEN ? qtyDistance : glyphDistance;
+      if (same.some((x) => x.feat.length === t.feat.length && dist(x.feat, t.feat) < 0.03)) continue;
       if (same.length >= perDigit) out.splice(out.indexOf(same[0]), 1);
       out.push(t);
     }
     return out;
+  }
+
+  /* ---------- 數量數字（新版） ----------
+   * 遊戲的數量是「白色筆畫＋粗黑描邊」，緊貼在格子左下角。截圖亮度、縮放都可能不同，所以：
+   * - 門檻跟著格子走：比格子下半部亮度中位數的 0.6 倍亮就算「亮」；
+   * - 被黑描邊整個圍住、不碰到邊的亮區才是字的筆畫，每個字是一塊（0 的洞併進去）；
+   * - 只留上下緣對齊、從左邊連續排列的幾塊（擋在後面的圖示會被排除）；
+   * - 每塊縮放到自己的外框，取 6x9 覆蓋率＋寬高比，和數字樣本比最像的。 */
+  const QW = 6, QH = 9, QLEN = QW * QH + 3; // 覆蓋率 + 寬高比 + 洞的數量 + 洞的高度位置
+
+  function qtyGlyphs(img, cell, k) {
+    k = k || 0.6;
+    // 往左多看一點：框得比格子小時，第一個字才不會被切掉
+    const r = clampRect(img, { x: cell.x - cell.w * 0.04, y: cell.y + cell.h * 0.5, w: cell.w * 1.04, h: cell.h * 0.5 });
+    const w = Math.max(0, r.x1 - r.x0), h = Math.max(0, r.y1 - r.y0), N = w * h;
+    if (!N) return { glyphs: [], w, h, lab: null };
+    const L = new Float32Array(N);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = ((r.y0 + y) * img.width + (r.x0 + x)) * 4;
+      L[y * w + x] = lum(img.data[i], img.data[i + 1], img.data[i + 2]);
+    }
+    const sorted = Array.from(L).sort((a, b) => a - b);
+    const th = sorted[N >> 1] * k;
+    const lab = new Int32Array(N).fill(-1);
+    const comps = [];
+    const stack = [];
+    for (let p = 0; p < N; p++) {
+      if (lab[p] !== -1 || L[p] < th) continue;
+      const id = comps.length;
+      let n = 0, edge = false, x0 = w, x1 = 0, y0 = h, y1 = 0;
+      lab[p] = id;
+      stack.push(p);
+      while (stack.length) {
+        const c = stack.pop();
+        n++;
+        const x = c % w, y = (c - x) / w;
+        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) edge = true;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+        if (x > 0 && lab[c - 1] === -1 && L[c - 1] >= th) { lab[c - 1] = id; stack.push(c - 1); }
+        if (x < w - 1 && lab[c + 1] === -1 && L[c + 1] >= th) { lab[c + 1] = id; stack.push(c + 1); }
+        if (y > 0 && lab[c - w] === -1 && L[c - w] >= th) { lab[c - w] = id; stack.push(c - w); }
+        if (y < h - 1 && lab[c + w] === -1 && L[c + w] >= th) { lab[c + w] = id; stack.push(c + w); }
+        // 斜角相連也算同一筆（縮放後 7 之類的斜筆畫常只剩斜角接著）
+        for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const d = ny * w + nx;
+          if (lab[d] === -1 && L[d] >= th) { lab[d] = id; stack.push(d); }
+        }
+      }
+      comps.push({ id, n, edge, x0, x1, y0, y1 });
+    }
+    let g = comps.filter((c) => !c.edge && c.n >= 6 && c.n < N * 0.2);
+    const hMax = g.reduce((a, c) => Math.max(a, c.y1 - c.y0 + 1), 0);
+    g = g.filter((c) => c.y1 - c.y0 + 1 >= hMax * 0.6 && c.y1 - c.y0 + 1 >= h * 0.15).sort((a, b) => a.x0 - b.x0);
+    // 在別的字外框裡面的是洞（0 的中間），不算
+    const merged = [];
+    for (const c of g) if (!merged.some((o) => c.x0 >= o.x0 - 1 && c.x1 <= o.x1 + 1)) merged.push(c);
+    // 上下緣對齊的一組（最多字共用的底線）
+    let best = [];
+    for (const ref of merged) {
+      const grp = merged.filter((c) => Math.abs(c.y1 - ref.y1) <= 2 && Math.abs(c.y0 - ref.y0) <= 3);
+      if (grp.length > best.length) best = grp;
+    }
+    // 從左邊開始連續排列
+    const glyphs = [];
+    for (const c of best) {
+      if (glyphs.length && c.x0 - glyphs[glyphs.length - 1].x1 > (c.y1 - c.y0) * 0.6) break;
+      glyphs.push(c);
+    }
+    return { glyphs, w, h, lab };
+  }
+
+  function qtyFeature(q, c) {
+    const bw = c.x1 - c.x0 + 1, bh = c.y1 - c.y0 + 1;
+    const f = new Array(QLEN).fill(0), n = new Array(QW * QH).fill(0);
+    for (let y = c.y0; y <= c.y1; y++) {
+      for (let x = c.x0; x <= c.x1; x++) {
+        const g = Math.min(QH - 1, Math.floor(((y - c.y0) * QH) / bh)) * QW + Math.min(QW - 1, Math.floor(((x - c.x0) * QW) / bw));
+        n[g]++;
+        if (q.lab[y * q.w + x] === c.id) f[g]++;
+      }
+    }
+    for (let i = 0; i < QW * QH; i++) f[i] = n[i] ? Math.round((f[i] / n[i]) * 100) / 100 : 0;
+    f[QW * QH] = Math.round((bw / bh) * 100) / 100;
+    // 洞：外框內、不是筆畫、又連不到外框邊緣的區域（0 一個在中間、6 在下、9 在上、8 兩個）
+    const pw = bw + 2, ph = bh + 2;
+    const inGlyph = (x, y) => x >= 1 && y >= 1 && x <= bw && y <= bh && q.lab[(c.y0 + y - 1) * q.w + (c.x0 + x - 1)] === c.id;
+    const seen = new Uint8Array(pw * ph);
+    const flood = (sx, sy) => {
+      const st = [sy * pw + sx];
+      seen[sy * pw + sx] = 1;
+      let n2 = 0, sy2 = 0;
+      while (st.length) {
+        const p = st.pop();
+        const x = p % pw, y = (p - x) / pw;
+        n2++; sy2 += y;
+        for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+          if (nx < 0 || ny < 0 || nx >= pw || ny >= ph) continue;
+          const k = ny * pw + nx;
+          if (seen[k] || inGlyph(nx, ny)) continue;
+          seen[k] = 1;
+          st.push(k);
+        }
+      }
+      return { n: n2, cy: sy2 / n2 };
+    };
+    flood(0, 0); // 外面
+    const holes = [];
+    for (let y = 1; y <= bh; y++) for (let x = 1; x <= bw; x++) {
+      if (!seen[y * pw + x] && !inGlyph(x, y)) { const h = flood(x, y); if (h.n >= Math.max(2, bw * bh * 0.015)) holes.push(h); }
+    }
+    holes.sort((a, b) => b.n - a.n);
+    f[QW * QH + 1] = Math.min(2, holes.length);
+    f[QW * QH + 2] = holes.length ? Math.round(((holes[0].cy - 1) / bh) * 100) / 100 : -1;
+    return f;
+  }
+
+  function qtyDistance(a, b) {
+    let s = 0;
+    for (let i = 0; i < QW * QH; i++) s += Math.abs(a[i] - b[i]);
+    s = s / (QW * QH) + Math.abs(a[QW * QH] - b[QW * QH]) * 0.5;
+    s += Math.abs(a[QW * QH + 1] - b[QW * QH + 1]) * 0.15; // 洞的數量不同
+    const ya = a[QW * QH + 2], yb = b[QW * QH + 2];
+    if (ya >= 0 && yb >= 0) s += Math.abs(ya - yb) * 0.4; // 洞的位置不同（6 和 9）
+    return s;
+  }
+
+  /* 亮度門檻要試幾個：截圖經過縮放、影像壓縮後描邊會變淡，固定一個比例容易讓字的筆畫漏到底色裡 */
+  const QKS = [0.6, 0.5, 0.7, 0.8];
+
+  /* 這格有沒有數字、有幾個字（各門檻裡最多的） */
+  function qtyCount(img, cell) {
+    let n = 0;
+    for (const k of QKS) n = Math.max(n, qtyGlyphs(img, cell, k).glyphs.length);
+    return n;
+  }
+
+  function classify(q, T, limit) {
+    let text = '', sum = 0;
+    for (const c of q.glyphs) {
+      const f = qtyFeature(q, c);
+      let best = null, bd = Infinity;
+      for (const t of T) {
+        const d = qtyDistance(f, t.feat);
+        if (d < bd) { bd = d; best = t; }
+      }
+      if (!best || bd > limit) return null;
+      text += best.d;
+      sum += bd;
+    }
+    return { text, avg: sum / q.glyphs.length };
+  }
+
+  /* 用數字樣本讀數量。每個門檻各讀一次，取「每個字都對得上」裡字數最多、最像的。都對不上回傳 null。
+   * templates: [{ d, feat }]（舊格式的樣本會略過） */
+  function readQty(img, cell, templates, maxDist) {
+    const T = (templates || []).filter((t) => t && t.feat && t.feat.length === QLEN);
+    if (!T.length) return null;
+    const limit = maxDist == null ? 0.3 : maxDist;
+    let best = null;
+    for (const k of QKS) {
+      const q = qtyGlyphs(img, cell, k);
+      if (!q.glyphs.length || q.glyphs.length > 5) continue;
+      const r = classify(q, T, limit);
+      if (r && (!best || r.text.length > best.text.length || (r.text.length === best.text.length && r.avg < best.avg))) best = r;
+    }
+    return best ? parseQty(best.text) : null;
+  }
+
+  /* 使用者確認數量後學樣本：用字數剛好等於位數的門檻（字數要和位數一樣） */
+  function learnQty(img, cell, qty) {
+    const text = String(qty);
+    if (!/^[0-9]+$/.test(text)) return [];
+    for (const k of QKS) {
+      const q = qtyGlyphs(img, cell, k);
+      if (q.glyphs.length === text.length) return q.glyphs.map((c, i) => ({ d: text[i], feat: qtyFeature(q, c) }));
+    }
+    return [];
+  }
+
+  /* 給 OCR 的圖：只畫找到的字（黑字白底、放大） */
+  function qtyImage(img, cell, scale) {
+    scale = scale || 4;
+    let q = null;
+    for (const k of QKS) { const t = qtyGlyphs(img, cell, k); if (!q || t.glyphs.length > q.glyphs.length) q = t; }
+    const pad = 4 * scale;
+    const width = q.w * scale + pad * 2, height = q.h * scale + pad * 2;
+    const data = new Uint8ClampedArray(Math.max(0, width * height * 4)).fill(255);
+    let ink = 0;
+    for (const c of q.glyphs) {
+      for (let y = c.y0; y <= c.y1; y++) {
+        for (let x = c.x0; x <= c.x1; x++) {
+          if (q.lab[y * q.w + x] !== c.id) continue;
+          ink++;
+          for (let dy = 0; dy < scale; dy++) {
+            for (let dx = 0; dx < scale; dx++) {
+              const o = ((pad + y * scale + dy) * width + (pad + x * scale + dx)) * 4;
+              data[o] = data[o + 1] = data[o + 2] = 0;
+            }
+          }
+        }
+      }
+    }
+    return { data, width, height, ink };
   }
 
   /* OCR 文字 → 數量；讀不到就是 null。 */
@@ -514,6 +723,7 @@
     GRID, gridCells, iconRect, digitRect, regionStats, isEmptyCell, sampleRegion, cellFeature,
     featureDistance, matchIcon, digitMask, digitImage, segmentGlyphs, glyphFeature, glyphDistance,
     readDigits, learnDigits, mergeDigitTemplates, parseQty, analyze,
+    qtyGlyphs, qtyFeature, qtyDistance, qtyCount, readQty, learnQty, qtyImage,
     iconImageShape, cellShape, shapeDistance, rankCatalog,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
