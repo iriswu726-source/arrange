@@ -68,6 +68,7 @@
     const scanSettings = {
       rect: scan.rect, cols: scan.cols, rows: scan.rows, emptyThreshold: scan.emptyThreshold,
       maxDist: scan.maxDist, ocr: scan.ocr, digitThreshold: scan.digitThreshold, zoom: scan.zoom,
+      capRect: scan.capRect || null, capCols: scan.capCols || 0, capRows: scan.capRows || 0,
     };
     // 雲端模式：資料推到隊伍，本機只存掃圖設定（本機資料原封不動保留）
     const local = cloud.sync ? cloud.localState : state;
@@ -404,10 +405,12 @@
         <label>角色 <select id="scanChar">${state.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === scan.charId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
         <label>分頁 <select id="scanTab">${S.TABS.map((t) => `<option value="${t.id}" ${t.id === scan.tab ? 'selected' : ''}>${t.name}</option>`).join('')}</select></label>
         <span style="flex:1"></span>
+        <button class="btn" data-act="cap-start" title="直接擷取遊戲視窗的畫面，不用存截圖">🖥 擷取遊戲畫面</button>
         <button class="btn" data-act="scan-pick">選擇截圖…</button>
         <button class="btn" data-act="scan-demo" title="產生一張示範用的背包圖，試玩辨識流程">示範圖片</button>
         <input id="scanFile" type="file" accept="image/*" hidden>
       </div>
+      <div id="capBar"></div>
       <div class="scan-grid">
         <div>
           <div id="scanStage"></div>
@@ -434,7 +437,149 @@
         </div>
       </div>`;
     renderStage();
+    renderCapBar();
     renderScanResults();
+  }
+
+  /* ================= 擷取遊戲畫面 =================
+   * 用瀏覽器的「分享畫面」看遊戲視窗（只看畫面，不碰遊戲）。
+   * 擷取一張：把目前畫面放進掃圖。連續擷取：一邊捲動背包，一邊自動把畫面接成一張長圖。 */
+  const cap = { stream: null, video: null, timer: null, stitcher: null, strips: [], frame: false, msg: '' };
+
+  async function capStart() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { toast('這個瀏覽器不支援擷取畫面，請用電腦版 Chrome 或 Edge'); return; }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false });
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+      await video.play();
+      await new Promise((r) => (video.videoWidth ? r() : video.addEventListener('loadedmetadata', r, { once: true })));
+      cap.stream = stream;
+      cap.video = video;
+      stream.getVideoTracks()[0].addEventListener('ended', capStop);
+      capGrab();
+    } catch (e) {
+      if (e && e.name !== 'NotAllowedError') toast('無法擷取畫面：' + (e.message || e));
+    }
+  }
+
+  function capStop() {
+    capCancelRun();
+    if (cap.stream) cap.stream.getTracks().forEach((t) => t.stop());
+    cap.stream = null;
+    cap.video = null;
+    renderCapBar();
+  }
+
+  function capFrame() {
+    const v = cap.video;
+    const cv = document.createElement('canvas');
+    cv.width = v.videoWidth;
+    cv.height = v.videoHeight;
+    cv.getContext('2d').drawImage(v, 0, 0);
+    return cv;
+  }
+
+  /* 擷取一張：放進掃圖，用上次連續擷取的格子範圍（可以再調整） */
+  function capGrab() {
+    if (!cap.video) return;
+    const cv = capFrame();
+    if (scan.capRect && scan.capRect.x + scan.capRect.w <= cv.width && scan.capRect.y + scan.capRect.h <= cv.height) {
+      scan.rect = Object.assign({}, scan.capRect);
+      scan.cols = scan.capCols || scan.cols;
+      scan.rows = scan.capRows || scan.rows;
+    }
+    setScanImage(cv);
+    cap.frame = true;
+    cap.msg = '';
+    renderScan();
+  }
+
+  /* 連續擷取：格子範圍用目前畫面上框好的（只框「看得到的那幾列」） */
+  function capRun() {
+    if (!cap.video) return;
+    if (cap.frame && scan.rect && scan.rect.w > 4 && scan.rect.h > 4) {
+      scan.capRect = Object.assign({}, scan.rect);
+      scan.capCols = scan.cols;
+      scan.capRows = scan.rows;
+      save();
+    }
+    if (!scan.capRect) { toast('請先按「擷取一張」，在畫面上框好背包格子，再開始連續擷取'); return; }
+    const r = scan.capRect, cols = scan.capCols, rows = scan.capRows;
+    const w = Math.round(r.w), h = Math.round(r.h), rh = r.h / rows, H = Math.max(1, Math.round(rh));
+    const cv = document.createElement('canvas');
+    cv.width = w;
+    cv.height = h;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    cap.stitcher = ArrCapture.createStitcher();
+    cap.strips = [];
+    cap.msg = '開始捲動背包（從最上面捲到最下面）…';
+    cap.timer = setInterval(() => {
+      if (!cap.video) return capCancelRun();
+      g.drawImage(cap.video, r.x, r.y, r.w, r.h, 0, 0, w, h);
+      const res = cap.stitcher.add(ArrCapture.rowSigs(g.getImageData(0, 0, w, h), { x: 0, y: 0, w, h }, cols, rows));
+      for (const i of res.rows) {
+        const strip = document.createElement('canvas');
+        strip.width = w;
+        strip.height = H;
+        strip.getContext('2d').drawImage(cv, 0, Math.round(i * rh), w, H, 0, 0, w, H);
+        cap.strips.push(strip);
+      }
+      const prev = cap.msg;
+      if (res.status === 'gap') cap.msg = `⚠ 這個畫面接不上（捲太快、往上捲了，或滑鼠提示擋住格子）。請捲回剛才接到的位置再慢慢往下。目前 ${res.total} 列`;
+      else if (res.status === 'first' || res.status === 'added') cap.msg = `已接 ${res.total} 列，繼續往下捲；捲到底按「完成」`;
+      if (cap.msg !== prev) { const el = $('#capMsg'); if (el) el.textContent = cap.msg; }
+    }, 200);
+    renderCapBar();
+  }
+
+  function capCancelRun() {
+    if (cap.timer) clearInterval(cap.timer);
+    cap.timer = null;
+  }
+
+  /* 完成：把接好的列組成一張長圖，直接辨識 */
+  function capFinish() {
+    capCancelRun();
+    const strips = cap.strips;
+    cap.strips = [];
+    if (!strips.length) { cap.msg = '還沒有接到畫面'; renderCapBar(); return; }
+    const w = strips[0].width, H = strips[0].height;
+    const cv = document.createElement('canvas');
+    cv.width = w;
+    cv.height = H * strips.length;
+    const g = cv.getContext('2d');
+    strips.forEach((s, i) => g.drawImage(s, 0, i * H));
+    scan.cols = scan.capCols;
+    scan.rows = strips.length;
+    scan.rect = { x: 0, y: 0, w, h: H * strips.length };
+    setScanImage(cv);
+    scan.rect = { x: 0, y: 0, w, h: H * strips.length };
+    cap.frame = false;
+    cap.msg = `共 ${strips.length} 列，辨識中…`;
+    renderScan();
+    Promise.resolve(runScan()).then(() => {
+      cap.msg = `共 ${strips.length} 列，已辨識完成，請檢查下方結果。換分頁或換角色後，直接再按「連續擷取」。`;
+      renderCapBar();
+    });
+  }
+
+  function renderCapBar() {
+    const bar = $('#capBar');
+    if (!bar) return;
+    if (!cap.stream) { bar.innerHTML = ''; return; }
+    const running = !!cap.timer;
+    bar.innerHTML = `<div class="panel cap-bar">
+      <b>🖥 正在擷取遊戲畫面</b>
+      ${running
+        ? '<button class="btn primary" data-act="cap-finish">完成</button><button class="btn" data-act="cap-cancel">取消</button>'
+        : `<button class="btn" data-act="cap-grab" title="把目前的遊戲畫面放進來">擷取一張</button>
+           <button class="btn primary" data-act="cap-run" title="一邊捲動背包，一邊自動接成一張長圖">連續擷取（捲動背包）</button>`}
+      <button class="btn danger" data-act="cap-stop">停止分享</button>
+      <div class="muted small" id="capMsg" style="flex-basis:100%">${esc(cap.msg || (running ? '' : '第一次使用：按「擷取一張」，在畫面上框住背包「看得到的格子」，設定欄數與看得到的列數，再按「連續擷取」。之後換分頁、換角色都直接按「連續擷取」。'))}</div>
+    </div>`;
   }
 
   function renderStage() {
@@ -510,6 +655,7 @@
     g.drawImage(img, 0, 0);
     scan.image = cv;
     scan.imgData = g.getImageData(0, 0, cv.width, cv.height);
+    cap.frame = false;
     scan.rows_ = [];
     if (scan.rect && (scan.rect.x + scan.rect.w > cv.width || scan.rect.y + scan.rect.h > cv.height)) scan.rect = null;
     if (!scan.rect) scan.rect = { x: 0, y: 0, w: cv.width, h: cv.height };
@@ -1474,6 +1620,12 @@
     else if (act === 'move-item') openMoveDialog(tr.dataset.item);
     else if (act === 'edit-stats') openStatsDialog(tr.dataset.item);
     else if (act === 'scan-pick') $('#scanFile').click();
+    else if (act === 'cap-start') capStart();
+    else if (act === 'cap-grab') capGrab();
+    else if (act === 'cap-run') capRun();
+    else if (act === 'cap-finish') capFinish();
+    else if (act === 'cap-cancel') { capCancelRun(); cap.strips = []; cap.msg = '已取消'; renderCapBar(); }
+    else if (act === 'cap-stop') capStop();
     else if (act === 'scan-demo') { const cv = demoImage(); setScanImage(cv); renderScan(); }
     else if (act === 'scan-run') runScan();
     else if (act === 'scan-write') writeScan(b.dataset.mode);

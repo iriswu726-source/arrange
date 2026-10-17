@@ -304,3 +304,7 @@ input, select { background: #fbf9f6; }
 .dialog::backdrop { background: rgba(74, 68, 64, .35); }
 .cloud-chip { background: var(--panel); }
 .team-catalog { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* 擷取遊戲畫面 */
+.cap-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-color: var(--accent-2); }
+.cap-bar b { margin-right: 4px; }
