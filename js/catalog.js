@@ -6,7 +6,9 @@
   const STORE = 'catalog';
   // 網站分類 → 背包分頁；沒對到的不限分頁
   // 網站歸在裝備、但遊戲裡放在消耗欄的分類
-  const CATEGORY_TAB = { arrow: 'use', arrows: 'use', 'throwing-star': 'use', 'throwing-stars': 'use', bullet: 'use', bullets: 'use', scroll: 'use', scrolls: 'use' };
+  // 飛鏢、子彈放裝備欄；箭矢放消耗欄
+  const CATEGORY_TAB = { arrow: 'use', arrows: 'use', 'throwing-star': 'equip', 'throwing-stars': 'equip', bullet: 'equip', bullets: 'equip', scroll: 'use', scrolls: 'use' };
+  const tabOf = (it) => CATEGORY_TAB[it.category] || SECTION_TAB[it.section] || '';
   const SECTION_TAB = { equipment: 'equip', useable: 'use', usable: 'use', useables: 'use', consumables: 'use', consumable: 'use', use: 'use', potions: 'use', potion: 'use', scroll: 'use', scrolls: 'use', setup: 'setup', 'set-up': 'setup', chairs: 'setup', etc: 'etc', misc: 'etc', materials: 'etc', material: 'etc', cash: 'special' };
 
   function openDb() {
@@ -33,7 +35,8 @@
     const db = await openDb();
     const items = await tx(db, 'readonly', (s) => s.getAll());
     db.close();
-    return items || [];
+    // 分頁依目前的規則重算（之前匯入的也套用新規則）
+    return (items || []).map((it) => Object.assign(it, { tab: tabOf(it) }));
   }
 
   function decode(dataUrl) {
@@ -128,7 +131,7 @@
         rows.push({
           id: String(it.id), name: String(it.name).trim(), nameEn: String(it.nameEn || ''),
           section: String(it.section || ''), category: String(it.category || ''),
-          tab: CATEGORY_TAB[it.category] || SECTION_TAB[it.section] || '', img: it.img, shape,
+          tab: tabOf(it), img: it.img, shape,
         });
       } catch (e) {
         skipped++;
@@ -147,7 +150,7 @@
     db.close();
   }
 
-  const api = { load, importData, clear, collapseMultiples, bookKind, fixName, SECTION_TAB, CATEGORY_TAB };
+  const api = { load, importData, clear, collapseMultiples, bookKind, fixName, tabOf, SECTION_TAB, CATEGORY_TAB };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ArrCatalog = api;
 })(typeof self !== 'undefined' ? self : this);

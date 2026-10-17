@@ -58,3 +58,11 @@ test('名稱只抓到分類字（藥水）時改用英文名稱', () => {
   assert.equal(C.fixName({ name: '藥水', nameEn: 'Cheesecake' }).name, 'Cheesecake');
   assert.equal(C.fixName({ name: '紅色藥水', nameEn: 'Red Potion' }).name, '紅色藥水');
 });
+
+test('飛鏢、子彈在裝備欄，箭矢在消耗欄', () => {
+  const C = require('../js/catalog.js');
+  assert.equal(C.tabOf({ section: 'equipment', category: 'throwing-star' }), 'equip');
+  assert.equal(C.tabOf({ section: 'equipment', category: 'bullet' }), 'equip');
+  assert.equal(C.tabOf({ section: 'equipment', category: 'arrow' }), 'use');
+  assert.equal(C.tabOf({ section: 'misc', category: 'leftover' }), 'etc');
+});
