@@ -118,35 +118,62 @@
     })();
   }
 
-  /* 「補漏＋等級」程式：網站的裝備總表沒有列出所有裝備（例如 /zh/equipment/overall/blue-dragon-armor）。
-   * 在網站任何一頁的 Console 執行：從 sitemap、列表頁、分類頁和每件裝備頁上的連結找出所有裝備頁，
-   * 讀出名稱和需求等級，列出等級 ≥ MIN 的裝備（另存 CSV），並把圖鑑裡還沒有的裝備存成圖鑑檔。
-   * KNOWN = 本工具圖鑑裡已經有的裝備 id（equipment/<分類>/<代號>）。 */
-  function equipScan(KNOWN, MIN) {
+  /* 「補漏」程式：網站的列表頁沒有列出所有道具（例如 /zh/equipment/overall/blue-dragon-armor）。
+   * 在網站任何一頁的 Console 執行：從 sitemap、列表頁、分類頁和每個道具頁上的連結，
+   * 找出裝備 / 消耗 / 捲軸 / 其他的所有道具頁，把圖鑑裡還沒有的存成圖鑑檔；
+   * 裝備另外讀需求等級，列出等級 ≥ MIN 的裝備（存成 CSV）。
+   * KNOWN = 圖鑑裡已有的 id（<分類>/<子分類>/<代號>），NAMES = 圖鑑裡已有的名稱（捲軸共用圖片，只能用名稱比對）。 */
+  function itemScan(KNOWN, NAMES, MIN) {
     (async () => {
       const ORIGIN = location.origin;
       if (!/artalemaplestory/.test(location.host)) { console.log('請在 https://www.artalemaplestory.com 的網頁上執行'); return; }
+      const SECTIONS = ['equipment', 'useable', 'scrolls', 'misc'];
+      const SEC = SECTIONS.join('|');
       const known = new Set(KNOWN);
+      const norm = (t) => String(t || '').replace(/\s+/g, '').replace(/[xX×]\d+$/, '');
+      const knownNames = new Set(NAMES.map(norm));
       const CJK = /[㐀-鿿]/;
+      const LVSUF = /\s*[（(]\s*LV\.?\s*\d+\s*[)）]\s*$/i;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const DETAIL = /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?equipment\/([a-z0-9-]+)\/([^/?#]+)\/?$/i;
-      const IMG = /\/images\/equipment\/([a-z0-9-]+)\/([^/?#.]+)\.(?:webp|png|gif|jpe?g)/gi;
-      const pages = new Map(); // 'cat/slug' → { cat, slug }
-      const cats = new Set();
-      const add = (cat, slug) => {
-        if (!cat || !slug || /^(page|list|grid)$/i.test(slug)) return false;
-        cats.add(cat);
-        const k = cat + '/' + decodeURIComponent(slug);
+      const DETAIL = new RegExp('^/(?:[a-z]{2}(?:-[a-z]{2})?/)?(' + SEC + ')/([a-z0-9-]+)(?:/([^/?#]+))?/?$', 'i');
+      const IMG = new RegExp('/images/(' + SEC + ')/(?:([a-z0-9-]+)/)?([^/?#."\'\\\\]+)\\.(?:webp|png|gif|jpe?g)', 'gi');
+      const pages = new Map(); // key 'sec/cat/slug' → { sec, cat, slug }
+      const cats = {}; // sec → Set(子分類)
+      SECTIONS.forEach((x) => { cats[x] = new Set(); });
+      const keyOf = (sec, cat, slug) => sec + '/' + (cat || '') + '/' + slug;
+      const add = (sec, cat, slug) => {
+        sec = sec.toLowerCase();
+        if (!slug || /^\d+$/.test(slug) || /^(page|list|grid)$/i.test(slug)) return false;
+        try { slug = decodeURIComponent(slug); } catch (e) { /* 原樣 */ }
+        if (cat) cats[sec].add(cat);
+        const k = keyOf(sec, cat, slug);
         if (pages.has(k)) return false;
-        pages.set(k, { cat, slug: decodeURIComponent(slug) });
+        pages.set(k, { sec, cat: cat || '', slug });
         return true;
       };
-      const linksIn = (html) => {
+      // /zh/misc/xxx 可能是分類頁也可能是道具頁：xxx 是已知的分類就當分類頁
+      const fromPath = (path) => {
+        const d = path.match(DETAIL);
+        if (!d) return false;
+        if (d[3]) return add(d[1], d[2], d[3]);
+        if (cats[d[1].toLowerCase()].has(d[2])) return false;
+        return add(d[1], '', d[2]);
+      };
+      const linksIn = (html, listed) => {
         let n = 0;
         for (const m of html.matchAll(/href=\\?["']([^"'\\]+)\\?["']/g)) {
-          try { const u = new URL(m[1], ORIGIN); const d = u.pathname.match(DETAIL); if (d && u.host === location.host && add(d[1], d[2])) n++; } catch (e) { /* 略過 */ }
+          try {
+            const u = new URL(m[1], ORIGIN);
+            if (u.host !== location.host) continue;
+            const d = u.pathname.match(DETAIL);
+            if (d && listed) listed.add(d[3] ? keyOf(d[1].toLowerCase(), d[2], d[3]) : keyOf(d[1].toLowerCase(), '', d[2]));
+            if (fromPath(u.pathname)) n++;
+          } catch (e) { /* 略過 */ }
         }
-        for (const m of html.matchAll(IMG)) if (add(m[1], m[2])) n++;
+        for (const m of html.matchAll(IMG)) {
+          if (listed && !/^\d+$/.test(m[3])) listed.add(keyOf(m[1].toLowerCase(), m[2], m[3]));
+          if (add(m[1], m[2], m[3])) n++;
+        }
         return n;
       };
       async function get(url, tries = 3) {
@@ -160,17 +187,17 @@
         }
         return null;
       }
+      const pathOf = (pg) => `/zh/${pg.sec}/${pg.cat ? pg.cat + '/' : ''}${pg.slug}`;
 
-      for (const id of known) { const p = id.split('/'); if (p[0] === 'equipment' && p.length >= 3) add(p[1], p.slice(2).join('/')); }
-      const fromKnown = pages.size;
+      for (const id of known) { const p = id.split('/'); if (SECTIONS.includes(p[0]) && p.length >= 3 && p[2]) add(p[0], p[1], p.slice(2).join('/')); }
 
       // 1) sitemap
-      console.log('尋找裝備頁（sitemap）…');
+      console.log('尋找道具頁（sitemap）…');
       const maps = ['/sitemap.xml', '/sitemap_index.xml', '/sitemap-index.xml', '/zh/sitemap.xml', '/sitemap-0.xml'];
       const robots = await get('/robots.txt', 1);
       if (robots) for (const m of robots.matchAll(/sitemap:\s*(\S+)/gi)) maps.unshift(m[1]);
       const seenMap = new Set();
-      let fromMap = 0;
+      const sitemapPaths = [];
       while (maps.length && seenMap.size < 60) {
         const u = maps.shift();
         if (seenMap.has(u)) continue;
@@ -180,34 +207,37 @@
         for (const m of xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)) {
           const loc = m[1].replace(/&amp;/g, '&');
           if (/\.xml(\?|$)/i.test(loc)) { maps.push(loc); continue; }
-          try { const d = new URL(loc).pathname.match(DETAIL); if (d && add(d[1], d[2])) fromMap++; } catch (e) { /* 略過 */ }
+          try { sitemapPaths.push(new URL(loc).pathname); } catch (e) { /* 略過 */ }
         }
       }
-      console.log(`sitemap 找到 ${fromMap} 個圖鑑裡沒有的裝備頁`);
 
-      // 2) 列表頁（每頁 100 個）與各分類頁
-      console.log('讀取列表頁與分類頁…');
+      // 2) 各分類的列表頁（每頁 100 個）與子分類頁
       const listed = new Set();
-      for (let p = 1; p <= 60; p++) {
-        const html = await get(`/zh/equipment?viewMode=list&pageSize=100&page=${p}`, 2);
-        if (!html) break;
-        const before = new Set(pages.keys());
-        const n = linksIn(html);
-        for (const m of html.matchAll(IMG)) listed.add('equipment/' + m[1] + '/' + m[2]);
-        for (const k of pages.keys()) if (!before.has(k)) listed.add('equipment/' + k);
-        if (n === 0 && p > 1) break;
-      }
-      // 沒有給圖鑑清單時：總表上看得到的就算「圖鑑裡有」
-      if (!known.size) for (const id of listed) known.add(id);
-      for (const c of [...cats]) {
-        for (let p = 1; p <= 20; p++) {
-          const html = await get(`/zh/equipment/${c}?viewMode=list&pageSize=100&page=${p}`, 2);
-          if (!html || linksIn(html) === 0) break;
+      for (const sec of SECTIONS) {
+        console.log(`讀取「${sec}」列表頁…`);
+        for (let p = 1; p <= 60; p++) {
+          const html = await get(`/zh/${sec}?viewMode=list&pageSize=100&page=${p}`, 2);
+          if (!html || (linksIn(html, listed) === 0 && p > 1)) break;
         }
       }
-      console.log(`目前共 ${pages.size} 個裝備頁（圖鑑原有 ${fromKnown} 個）`);
+      // 子分類要先知道，sitemap 裡 /zh/misc/xxx 才分得出是分類頁還是道具頁
+      for (const path of sitemapPaths) { const d = path.match(DETAIL); if (d && d[3]) cats[d[1].toLowerCase()].add(d[2]); }
+      for (const path of sitemapPaths) fromPath(path);
+      for (const sec of SECTIONS) {
+        for (const c of [...cats[sec]]) {
+          for (let p = 1; p <= 20; p++) {
+            const html = await get(`/zh/${sec}/${c}?viewMode=list&pageSize=100&page=${p}`, 2);
+            if (!html || linksIn(html) === 0) break;
+          }
+        }
+      }
+      // 列表頁 / 分類頁的網址被當成道具頁的拿掉
+      for (const [k, pg] of [...pages]) if (!pg.cat && cats[pg.sec].has(pg.slug)) pages.delete(k);
+      if (!known.size) for (const k of listed) known.add(k); // 沒給圖鑑清單時：列表上看得到的就算「圖鑑裡有」
+      const count = (sec) => [...pages.values()].filter((pg) => pg.sec === sec).length;
+      console.log('目前找到的道具頁：' + SECTIONS.map((x) => `${x} ${count(x)}`).join('、'));
 
-      // 3) 逐頁讀取名稱與等級；裝備頁上的其他裝備連結也加進來
+      // 3) 讀每個道具頁（裝備要讀等級）；頁面上的其他道具連結也加進來
       const LABEL = /(?:需求等級|等級需求|要求等級|需要等級|所需等級|裝備等級|REQ\.?\s*LEV(?:EL)?|Required\s*Level|Req\.?\s*Level)\s*[:：]?\s*(?:Lv\.?\s*)?(\d{1,3})/i;
       const KEY = /\\?"(?:reqLevel|requiredLevel|req_level|levelRequirement|levelReq|reqLev|requireLevel|minLevel)\\?"\s*:\s*\\?"?(\d{1,3})/i;
       const KEY2 = /\\?"(?:level|lv)\\?"\s*:\s*\\?"?(\d{1,3})/i;
@@ -216,60 +246,54 @@
         const doc = new DOMParser().parseFromString(html, 'text/html');
         doc.querySelectorAll('script, style, noscript').forEach((e) => e.remove());
         const text = (doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ');
-        let level = null, how = '';
-        for (const [re, src, h] of [[LABEL, text, '文字'], [KEY, html, '資料'], [KEY2, html, '資料level'], [LOOSE, text, '文字(寬鬆)']]) {
-          const m = src.match(re);
-          if (m) { level = Number(m[1]); how = h; break; }
+        let level = null;
+        if (pg.sec === 'equipment') {
+          for (const [re, src] of [[LABEL, text], [KEY, html], [KEY2, html], [LOOSE, text]]) {
+            const m = src.match(re);
+            if (m) { level = Number(m[1]); break; }
+          }
         }
         const og = ((doc.querySelector('meta[property="og:title"]') || {}).content || doc.title || '').split(/\s[|｜–-]\s/)[0].trim();
-        const h1 = [...doc.querySelectorAll('h1, h2')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()).find((t) => CJK.test(t) && t.length <= 30 && !/ARTALE|楓之谷|圖鑑/i.test(t));
-        const name = (h1 || og || pg.slug).replace(/\s*[（(]\s*LV\.?\s*\d+\s*[)）]\s*$/i, '');
-        const img = [...doc.querySelectorAll('img')].map((i) => i.getAttribute('src') || '').find((s) => s.includes(`/images/equipment/${pg.cat}/${pg.slug}.`));
-        const alt = img && (doc.querySelector(`img[src="${img}"]`) || {}).alt;
-        return { level, how, name, nameEn: alt || pg.slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()), img: img ? new URL(img, ORIGIN).href : `${ORIGIN}/images/equipment/${pg.cat}/${pg.slug}.webp`, text };
+        const h1 = [...doc.querySelectorAll('h1, h2')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()).find((t) => CJK.test(t) && t.length <= 40 && !/ARTALE|楓之谷|圖鑑/i.test(t));
+        const name = (h1 || og || pg.slug).replace(LVSUF, '');
+        const imgs = [...doc.querySelectorAll('img')];
+        const own = imgs.find((i) => (i.getAttribute('src') || '').includes(`/${pg.slug}.`) && (i.getAttribute('src') || '').includes(`/images/${pg.sec}/`)) ||
+          imgs.find((i) => (i.getAttribute('src') || '').includes(`/images/${pg.sec}/`));
+        const src = own ? new URL(own.getAttribute('src'), ORIGIN).href : `${ORIGIN}/images/${pg.sec}/${pg.cat ? pg.cat + '/' : ''}${pg.slug}.webp`;
+        const nameEn = ((own && own.getAttribute('alt')) || pg.slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())).replace(LVSUF, '');
+        return { level, name, nameEn, img: src };
       };
-
-      // 先用藍龍鎧甲試一頁，確認讀得到等級
-      add('overall', 'blue-dragon-armor');
-      const testPg = pages.get('overall/blue-dragon-armor');
-      const testHtml = await get(`/zh/equipment/${testPg.cat}/${testPg.slug}`);
-      if (testHtml) {
-        const r = parse(testHtml, testPg);
-        console.log(`測試頁 blue-dragon-armor → 名稱「${r.name}」，等級 ${r.level ?? '讀不到'}（${r.how || '—'}）`);
-        if (r.level == null) {
-          const i = r.text.search(/等級|Lv|LEV/i);
-          console.log('讀不到等級。請把下面這段文字截圖給 Claude：\n' + r.text.slice(Math.max(0, i - 200), i + 300));
-        }
-      }
 
       const results = [];
       const queue = [...pages.keys()];
       const done = new Set();
-      let n = 0, fail = 0;
-      console.log(`開始讀取 ${queue.length} 個裝備頁（每頁一次，約需幾分鐘，請不要關閉這個分頁）…`);
+      let n = 0;
+      const failed = [];
+      console.log(`開始讀取 ${queue.length} 個道具頁（約需 10～20 分鐘，請不要關閉這個分頁）…`);
       await Promise.all([0, 1, 2, 3, 4, 5].map(async () => {
         while (queue.length) {
           const k = queue.shift();
-          if (done.has(k)) continue;
+          if (done.has(k) || !pages.has(k)) continue;
           done.add(k);
           const pg = pages.get(k);
-          const html = await get(`/zh/equipment/${pg.cat}/${pg.slug}`);
-          if (!html) { fail++; continue; }
-          const before = pages.size;
+          if (!pg.cat && cats[pg.sec].has(pg.slug)) continue; // 其實是分類頁
+          const html = await get(pathOf(pg));
+          if (!html) { failed.push(ORIGIN + pathOf(pg)); continue; }
+          const before = new Set(pages.keys());
           linksIn(html);
-          for (const kk of [...pages.keys()].slice(before)) queue.push(kk);
+          for (const kk of pages.keys()) if (!before.has(kk)) queue.push(kk);
+          if (!pg.cat && cats[pg.sec].has(pg.slug)) continue; // 讀了才知道是分類頁（裡面有道具連結）
           const r = parse(html, pg);
-          results.push({ id: `equipment/${pg.cat}/${pg.slug}`, cat: pg.cat, slug: pg.slug, name: r.name, nameEn: r.nameEn, level: r.level, img: r.img, url: `${ORIGIN}/zh/equipment/${pg.cat}/${pg.slug}` });
-          if (++n % 100 === 0) console.log(`已讀 ${n} / ${pages.size}`);
+          results.push(Object.assign({ key: k, sec: pg.sec, cat: pg.cat, slug: pg.slug, url: ORIGIN + pathOf(pg) }, r));
+          if (++n % 100 === 0) console.log(`已讀 ${n} 頁，還有 ${queue.length} 頁`);
         }
       }));
-      const inCat = (r) => known.has(r.id);
+      const inCat = (r) => known.has(r.key) || knownNames.has(norm(r.name));
       const missing = results.filter((r) => !inCat(r));
-      const noLevel = results.filter((r) => r.level == null);
-      const high = results.filter((r) => r.level != null && r.level >= MIN).sort((a, b) => a.level - b.level || a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name));
-      console.log(`讀完 ${results.length} 個裝備頁${fail ? `（${fail} 頁讀取失敗）` : ''}；圖鑑裡沒有的 ${missing.length} 個；讀不到等級的 ${noLevel.length} 個`);
-      console.log(`等級 ${MIN} 以上：${high.length} 個`);
-      console.table(high.map((r) => ({ 等級: r.level, 名稱: r.name, 英文: r.nameEn, 分類: r.cat, 圖鑑: inCat(r) ? '有' : '★沒有' })));
+      const equip = results.filter((r) => r.sec === 'equipment');
+      const noLevel = equip.filter((r) => r.level == null);
+      const high = equip.filter((r) => r.level != null && r.level >= MIN).sort((a, b) => a.level - b.level || a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name));
+      console.log(`讀完 ${results.length} 頁${failed.length ? `（${failed.length} 頁讀取失敗）` : ''}；圖鑑裡沒有的：` + SECTIONS.map((x) => `${x} ${missing.filter((r) => r.sec === x).length}`).join('、'));
 
       const download = (data, name, type) => {
         const a = document.createElement('a');
@@ -279,35 +303,42 @@
         a.click();
         a.remove();
       };
-      const csvCell = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-      const csv = [['等級', '名稱', '英文名稱', '分類', '圖鑑裡有沒有', '網址']]
-        .concat(high.map((r) => [r.level, r.name, r.nameEn, r.cat, inCat(r) ? '有' : '沒有', r.url]))
-        .map((row) => row.map(csvCell).join(',')).join('\r\n');
-      download('﻿' + csv, `artale-equipment-lv${MIN}.csv`, 'text/csv');
+      if (high.length) {
+        console.log(`裝備等級 ${MIN} 以上：${high.length} 個`);
+        console.table(high.map((r) => ({ 等級: r.level, 名稱: r.name, 英文: r.nameEn, 分類: r.cat, 圖鑑: inCat(r) ? '有' : '★沒有' })));
+        const cell = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+        const csv = [['等級', '名稱', '英文名稱', '分類', '圖鑑裡有沒有', '網址']]
+          .concat(high.map((r) => [r.level, r.name, r.nameEn, r.cat, inCat(r) ? '有' : '沒有', r.url]))
+          .map((row) => row.map(cell).join(',')).join('\r\n');
+        download('﻿' + csv, `artale-equipment-lv${MIN}.csv`, 'text/csv');
+      }
 
       if (missing.length) {
-        console.log(`下載 ${missing.length} 個漏掉的裝備圖片…`);
+        console.log(`下載 ${missing.length} 個漏掉的道具圖片…`);
         const toDataUrl = (blob) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
-        const q = missing.slice();
+        const imgOf = new Map();
+        const q = [...new Set(missing.map((r) => r.img))];
         await Promise.all([0, 1, 2, 3].map(async () => {
           while (q.length) {
-            const r = q.shift();
-            try { const res = await fetch(r.img); if (res.ok) r.data = await toDataUrl(await res.blob()); } catch (e) { /* 略過 */ }
+            const src = q.shift();
+            try { const res = await fetch(src); if (res.ok) imgOf.set(src, await toDataUrl(await res.blob())); } catch (e) { /* 略過 */ }
           }
         }));
-        const items = missing.filter((r) => r.data && /^data:image\//.test(r.data))
-          .map((r) => ({ id: r.id, section: 'equipment', category: r.cat, nameEn: r.nameEn, name: r.name, src: r.img, img: r.data, level: r.level }));
-        download(JSON.stringify({ format: 'artale-catalog', version: 1, source: ORIGIN + '/zh/equipment', exportedAt: new Date().toISOString(), items }), 'artale-catalog-equipment-extra.json', 'application/json');
-        console.log(`漏掉的裝備已存成 artale-catalog-equipment-extra.json（${items.length} 個），到本工具「圖示庫 → 匯入道具圖鑑」匯入即可`);
-        console.log('漏掉的裝備：\n' + missing.map((r) => `Lv${r.level ?? '?'} ${r.name} | ${r.nameEn} | ${r.cat}`).join('\n'));
+        const items = missing.filter((r) => /^data:image\//.test(imgOf.get(r.img) || ''))
+          .map((r) => ({ id: r.key + '#' + r.nameEn, section: r.sec, category: r.cat, nameEn: r.nameEn, name: r.name, src: r.img, img: imgOf.get(r.img), level: r.level }));
+        download(JSON.stringify({ format: 'artale-catalog', version: 1, source: ORIGIN, exportedAt: new Date().toISOString(), items }), 'artale-catalog-missing.json', 'application/json');
+        console.log('漏掉的道具：\n' + missing.map((r) => `[${r.sec}] ${r.name} | ${r.nameEn}${r.level != null ? ' | Lv' + r.level : ''}`).join('\n'));
+        console.log(`漏掉的道具已存成 artale-catalog-missing.json（${items.length} 個），到本工具「圖示庫 → 匯入道具圖鑑」匯入即可`);
       } else {
-        console.log('圖鑑沒有漏掉的裝備');
+        console.log('圖鑑沒有漏掉的道具');
       }
       if (noLevel.length) console.log('讀不到等級的裝備（前 20 個）：\n' + noLevel.slice(0, 20).map((r) => `${r.name} | ${r.url}`).join('\n'));
-      console.log(`完成！等級 ${MIN} 以上的清單已下載：artale-equipment-lv${MIN}.csv（可用 Excel 打開）`);
+      if (failed.length) console.log('讀取失敗的網址（前 20 個）：\n' + failed.slice(0, 20).join('\n'));
+      console.log('完成！');
     })();
   }
 
   root.ArrExportScript = '(' + exporter.toString() + ')();';
-  root.ArrEquipScanScript = (knownIds, min) => '(' + equipScan.toString() + ')(' + JSON.stringify(knownIds || []) + ', ' + (Number(min) || 100) + ');';
+  root.ArrItemScanScript = (knownIds, knownNames, min) =>
+    '(' + itemScan.toString() + ')(' + JSON.stringify(knownIds || []) + ', ' + JSON.stringify(knownNames || []) + ', ' + (Number(min) || 100) + ');';
 })(typeof self !== 'undefined' ? self : this);
